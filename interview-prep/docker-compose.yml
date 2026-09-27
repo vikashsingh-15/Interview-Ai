@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: interview-prep-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongodb:27017/interview-prep-dev
+      - JWT_SECRET=dev-secret-change-in-production
+      - PORT=3001
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - /app/dist
+    depends_on:
+      - mongodb
+    command: npm run start:dev
+    networks:
+      - interview-prep-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: interview-prep-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - NEXT_PUBLIC_APP_NAME=Interview Prep
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    command: npm run dev
+    networks:
+      - interview-prep-network
+
+  # MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: interview-prep-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=interview-prep-dev
+    networks:
+      - interview-prep-network
+
+  # Redis (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: interview-prep-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - interview-prep-network
+
+volumes:
+  mongodb-data:
+  redis-data:
+
+networks:
+  interview-prep-network:
+    driver: bridge
