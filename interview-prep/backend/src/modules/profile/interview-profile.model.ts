@@ -11,7 +11,7 @@ export type ExperienceLevel =
   | 'other';
 
 // Target role
-export type TargetRole =
+export type TargetRole = string
   | 'sde1'
   | 'sde2'
   | 'senior_software_engineer'
@@ -89,6 +89,13 @@ export interface IInterviewProfile {
   // Generated from resume + user input
   experienceLevel: ExperienceLevel;
   targetRole: TargetRole;
+  targetLevel?: string;
+  actualExperienceMonths?: number;
+  industries?: string[];
+  interviewTypes?: string[];
+  interviewDate?: Date;
+  dailyPlan?: Array<{ title: string; topic: string; type: string; count: number }>;
+  curriculum?: Array<{ topic: string; source: string; priority: number }>;
   targetCompanies: (typeof PREDEFINED_COMPANIES[number] | string)[];
   customCompanies: string[];
   primaryLanguages: string[];
@@ -131,10 +138,10 @@ export interface IInterviewProfileDocument extends IInterviewProfile, Document {
 
 // Interview Preferences Schema (subdocument)
 const interviewPreferencesSchema = new Schema<IInterviewPreferences>({
-  dailyQuestions: { type: Number, default: 10, min: [1, 'Minimum 1'], max: [50, 'Maximum 50'] },
-  codingCount: { type: Number, default: 2, min: [1, 'Minimum 1'], max: [10, 'Maximum 10'] },
-  systemDesignCount: { type: Number, default: 2, min: [1, 'Minimum 1'], max: [10, 'Maximum 10'] },
-  projectQuestions: { type: Number, default: 5, min: [3, 'Minimum 3'], max: [10, 'Maximum 10'] },
+  dailyQuestions: { type: Number, default: 10, min: [0, 'Minimum 0'], max: [50, 'Maximum 50'] },
+  codingCount: { type: Number, default: 2, min: [0, 'Minimum 0'], max: [10, 'Maximum 10'] },
+  systemDesignCount: { type: Number, default: 2, min: [0, 'Minimum 0'], max: [10, 'Maximum 10'] },
+  projectQuestions: { type: Number, default: 5, min: [0, 'Minimum 0'], max: [10, 'Maximum 10'] },
   difficulty: {
     type: String,
     enum: ['easy', 'medium', 'hard', 'extra_hard', 'mixed'],
@@ -187,28 +194,17 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
     experienceLevel: {
       type: String,
       enum: ['entry', 'sde1', 'sde2', 'senior', 'staff', 'principal', 'other'],
-      default: 'sde2',
+      default: 'other',
     },
-    targetRole: {
-      type: String,
-      enum: [
-        'sde1', 'sde2', 'senior_software_engineer', 'backend_engineer',
-        'full_stack_engineer', 'java_backend_engineer', 'nodejs_backend_engineer',
-        'software_engineer', 'platform_engineer', 'cloud_engineer',
-        'ai_engineer', 'other'
-      ],
-      default: 'sde2',
-    },
-    targetCompanies: [{
-      type: String,
-      enum: [
-        'amazon', 'google', 'microsoft', 'meta', 'apple', 'netflix',
-        'atlassian', 'uber', 'adobe', 'salesforce', 'deloitte', 'pwc',
-        'accenture', 'ibm', 'oracle', 'sap', 'intel', 'cisco', 'twitter',
-        'airbnb', 'dropbox', 'spotify', 'stripe', 'square', 'palantir',
-        'databricks', 'snowflake', 'coinbase', 'other'
-      ],
-    }],
+    targetRole: { type: String, trim: true, maxlength: 150, default: '' },
+    targetLevel: { type: String, maxlength: 100, default: '' },
+    actualExperienceMonths: { type: Number, min: 0, max: 1200, default: 0 },
+    industries: [String],
+    interviewTypes: [String],
+    interviewDate: Date,
+    dailyPlan: [{ title: String, topic: String, type: { type: String }, count: { type: Number, min: 0, max: 20 } }],
+    curriculum: [{ topic: String, source: String, priority: Number }],
+    targetCompanies: [{ type: String }],
     customCompanies: { type: [String], default: [] },
 
     // Technical profile derived from resume
@@ -277,9 +273,9 @@ interviewProfileSchema.statics.createForUser = async function(
   return this.create({
     userId,
     resumeProfileId,
-    experienceLevel: 'sde2',
-    targetRole: 'sde2',
-    targetCompanies: ['other'],
+    experienceLevel: 'other',
+    targetRole: '',
+    targetCompanies: [],
     onboardingCompleted: false,
   });
 };

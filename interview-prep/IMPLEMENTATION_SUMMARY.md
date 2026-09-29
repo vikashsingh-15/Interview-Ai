@@ -1,820 +1,94 @@
-# Implementation Summary
-
-## Final Architecture
-
-The application follows a modern full-stack architecture with clean separation between frontend, backend, database, and AI services.
-
-### System Diagram
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
-│   Next.js   │────▶│  Express.js │────▶│     MongoDB     │
-│   Frontend  │     │   Backend   │     │      Atlas      │
-│   (Tailwind)│     │  (TypeScript)│    │                 │
-└─────────────┘     └──────┬──────┘     └─────────────────┘
-                           │
-                    ┌──────┴──────┐
-                    │  AI Service │
-                    │ (OpenAI/    │
-                    │  Gemini/etc)│
-                    └─────────────┘
-```
-
-## Technology Stack
-
-### Frontend
-- **Framework**: Next.js 14 (App Router)
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **Components**: Custom component library
-- **State**: React Query, React Context
-- **Notifications**: React Hot Toast
-
-### Backend
-- **Runtime**: Node.js 18+
-- **Framework**: Express.js
-- **Language**: TypeScript
-- **Database**: MongoDB with Mongoose ODM
-- **Validation**: Zod + express-validator
-- **Auth**: JWT + HTTP-only cookies + bcrypt
-- **Rate Limiting**: express-rate-limit
-- **Logging**: Winston
-- **File Upload**: Multer
-
-### Infrastructure
-- **Database**: MongoDB Atlas (recommended)
-- **Redis**: For caching/queues (optional)
-- **Containerization**: Docker
-- **Deployment**: Docker Compose, Vercel, Render, Railway, AWS
-
-## Frontend Architecture
-
-### Pages
-- `/` - Landing page with auth forms
-- `/dashboard` - Main dashboard with today's session
-- `/login` - Login page
-- `/register` - Registration page
-- `/sessions/today` - Today's interview session
-- `/sessions/history` - Session history
-- `/sessions/day/[dayNumber]` - Specific day session
-- `/topics` - Topic browser
-- `/projects` - Project interview preparation
-- `/profile` - User profile and settings
-- `/resume` - Resume management
-
-### Component Architecture
-```
-src/
-├── app/                    # Next.js App Router pages
-├── components/
-│   ├── ui/                # Generic UI components
-│   │   ├── Button.tsx
-│   │   ├── Card.tsx
-│   │   ├── Badge.tsx
-│   │   ├── Input.tsx
-│   │   ├── Textarea.tsx
-│   │   ├── Progress.tsx
-│   │   └── Select.tsx
-│   ├── auth/              # Auth components
-│   │   ├── LoginForm.tsx
-│   │   └── RegisterForm.tsx
-│   ├── features/          # Feature components
-│   │   ├── HeroSection.tsx
-│   │   ├── FeaturesSection.tsx
-│   │   ├── HowItWorksSection.tsx
-│   │   └── CTASection.tsx
-│   ├── layout/            # Layout components
-│   │   ├── Header.tsx
-│   │   └── Footer.tsx
-│   └── providers/         # Context providers
-│       ├── AuthProvider.tsx
-│       └── ToastProvider.tsx
-├── lib/                   # Utilities
-│   ├── api.ts            # API client
-│   └── utils.ts          # Helper functions
-└── types/                # TypeScript types
-    └── index.ts
-```
-
-## Backend Architecture
-
-### Module Structure
-```
-src/
-├── modules/
-│   ├── auth/              # Authentication system
-│   │   ├── user.model.ts
-│   │   ├── auth.service.ts
-│   │   ├── auth.controller.ts
-│   │   └── email.service.ts
-│   ├── resume/            # Resume upload & parsing
-│   │   ├── resume.model.ts
-│   │   ├── resume-profile.model.ts
-│   │   ├── resume.service.ts
-│   │   └── resume.controller.ts
-│   ├── profile/           # Interview profile
-│   │   └── interview-profile.model.ts
-│   ├── skill-graph/       # Skill & concept tracking
-│   │   └── skill-graph.model.ts
-│   ├── questions/         # Question bank
-│   │   ├── question.model.ts
-│   │   ├── question-history.model.ts
-│   │   └── (services)
-│   ├── sessions/          # Daily sessions
-│   │   ├── daily-session.model.ts
-│   │   ├── session.service.ts
-│   │   └── session.controller.ts
-│   ├── revisions/         # Spaced repetition
-│   │   └── revision.model.ts
-│   ├── projects/          # Project interview
-│   │   └── project.model.ts
-│   ├── coding/            # Coding problems
-│   │   └── coding-problem.model.ts
-│   ├── mock-interviews/   # Mock interviews
-│   │   └── mock-interview.model.ts
-│   ├── market-calibration/ # Company calibration
-│   │   └── market-calibration.model.ts
-│   ├── analytics/         # Progress analytics
-│   │   └── progress-analytics.model.ts
-│   └── common/            # Shared utilities
-│       ├── filters/       # Error handling
-│       ├── middleware/    # Auth, validation, rate limiting
-│       └── entities/      # Model exports
-└── scripts/               # Seed scripts
-```
-
-### Database Schema
-
-#### Core Entities
-1. **User**: Authentication, preferences
-2. **Session**: Active session tracking
-3. **Resume**: Versioned resume storage
-4. **ResumeProfile**: Extracted resume data
-5. **InterviewProfile**: User's preparation profile
-6. **Topic/Subtopic/Concept**: Knowledge hierarchy
-7. **SkillGraph**: User's skill mastery tracking
-8. **Question**: Question bank with full metadata
-9. **QuestionHistory**: User's question exposure
-10. **DailySession**: Day-wise interview sessions
-11. **SessionQuestion**: Questions in sessions
-12. **Revision**: Spaced repetition entries
-13. **Project**: Verified projects from resume
-14. **CodingProblem**: Coding problems
-15. **CodingHistory**: User's coding attempts
-16. **MockInterview**: Mock interview sessions
-17. **MarketSource**: Public calibration sources
-18. **UserProgress**: Aggregated analytics
-
-#### Key Indexes
-- Unique constraints on: email, userId+sessionDate, userId+questionId
-- Compound indexes for: topic+subtopic+difficulty, userId+status
-- Text indexes for search
-
-## Authentication Architecture
-
-### Flow
-1. **Registration**: Email/password → bcrypt hash → User record → (optional) verification email
-2. **Login**: Email/password → bcrypt verify → JWT tokens → HTTP-only cookie
-3. **Session**: Cookie-based auth → JWT verification → User attached to request
-4. **Refresh**: Refresh token → new access token
-5. **Logout**: Clear cookie → delete session
-
-### Security
-- bcrypt with configurable rounds
-- JWT with configurable expiration
-- HTTP-only, secure, SameSite cookies
-- Rate limiting on auth endpoints
-- Account soft-delete with cascade
-
-## Resume Processing Pipeline
-
-### Upload
-1. Validate file (type, size, integrity)
-2. Calculate checksum
-3. Save securely
-4. Create ResumeVersion record
-5. Update Resume record
-
-### Parse
-1. Extract text (pdf-parse for PDF, mammoth for DOCX)
-2. Send to AI with structured prompt
-3. AI extracts: name, skills, experience, projects, education, certifications
-4. Validate and save to ResumeProfile
-5. User reviews and confirms
-
-### Profile Generation
-1. Extract confirmed skills from ResumeProfile
-2. Categorize by type (languages, frameworks, databases, cloud, AI)
-3. Create InterviewProfile with extracted information
-4. User sets target role, companies, preferences
-
-## Skill Graph
-
-### Structure
-- Hierarchical: Topic → Subtopic → Concept
-- Each with difficulty, interview priority, estimated study time
-- User progress tracked per skill, topic, concept, archetype
-
-### Update Rules
-- Correct answer: mastery increases
-- Incorrect answer: mastery decreases, weak flag set
-- Revision performance tracked separately
-- Weak areas flagged for future focus
-
-## Curriculum Engine
-
-### Topic Selection
-Weights based on:
-- Interview priority of topic
-- Resume relevance
-- Weak areas (from skill graph)
-- Time since last studied
-- Focus/excluded topics from preferences
-- Market relevance (from calibration)
-
-### Daily Session Composition
-- Technical section: 10 questions on one topic
-- System design: 2 questions
-- Coding: 2 problems (configurable 1-3)
-- Project: 5 questions (configurable 3-10)
-- Revision: All due revisions
-
-## Question Bank
-
-### Question Entity
-- Full metadata: topic, subtopic, concepts, difficulty, type, archetype
-- Provenance: CURATED, AI_GENERATED, RESUME_DERIVED, MARKET_CALIBRATED
-- Quality status: pending, approved, flagged, rejected
-- Uniqueness: normalized hash, semantic signature, embedding
-
-### Sources
-1. **Curated**: Seed questions (included in codebase)
-2. **AI Generated**: Generated on-demand with validation
-3. **Resume Derived**: Questions about user's projects
-4. **Market Calibrated**: Calibrated from public sources
-
-### Seed Questions
-Included 10+ high-quality curated questions covering:
-- Java (Collections, Concurrency, Streams)
-- Spring Boot (DI, Transactions)
-- JavaScript (Event Loop, Closures)
-- Node.js (Event Loop phases)
-- System Design (URL shortener)
-- MongoDB (Indexing)
-- AWS (Lambda cold starts)
-- REST APIs (Idempotency)
-
-Plus 3 coding problems:
-- Two Sum (Easy)
-- Reverse Linked List (Easy)
-- Longest Substring Without Repeating Characters (Medium)
-
-## AI Question Generation
-
-### Generation Flow
-1. Determine target topic, subtopics, concepts
-2. Determine difficulty, type, archetype distribution
-3. Identify weak concepts, coverage gaps
-4. Gather exclusion list (recently seen, weak areas)
-5. Call AI with structured prompt including:
-   - Candidate level, target role
-   - Topic, weak concepts, coverage gaps
-   - Difficulty/type distribution
-   - Excluded questions/hashes/concepts
-6. Validate JSON response
-7. Run through validation pipeline:
-   - Schema validation
-   - Topic/difficulty/type validation
-   - Technical correctness check
-   - Duplicate detection (exact, normalized, semantic)
-   - Quality validation
-8. Persist to question bank
-
-### AI Provider Abstraction
-- Interface: generateStructured(), generateText(), evaluateAnswer(), extractResume()
-- Implementations: OpenAI, Gemini, NVIDIA, custom OpenAI-compatible
-- Provider configuration in environment variables
-- Business logic doesn't depend on specific provider
-
-## Duplicate Detection
-
-### Multiple Levels
-1. **Exact text match**: Same question text
-2. **Normalized hash**: Normalized text hash collision
-3. **Semantic embedding**: Vector similarity (MongoDB Atlas Vector Search)
-4. **Concept overlap**: Same concepts tested
-5. **Archetype overlap**: Same question dimension
-
-### Implementation
-- Normalized hash stored with question
-- Hash = hashCode of normalized text
-- Duplicate check before insertion
-- Rejection if effectively same question
-
-## Daily Session Generation
-
-### Idempotency
-- Unique constraint on (userId, sessionDate)
-- If session exists, return it
-- Safe to retry
-
-### Generation Steps
-1. Check for existing session
-2. Load profile, skill graph, due revisions
-3. Select topic for day (weighted selection)
-4. Generate Revision section from due revisions
-5. Generate Technical section:
-   - Select 10 questions matching difficulty distribution
-   - Prefer existing questions, generate if needed
-   - Diversity: different concepts, archetypes
-6. Generate System Design section (2 questions)
-7. Generate Coding section (2 problems)
-8. Generate Project section (5 questions from resume)
-9. Create DailySession with all sections
-10. Return session
-
-### Topic Selection Algorithm
-Score each topic by:
-- Interview priority weight (1-4)
-- Resume relevance bonus (+15)
-- Weak area bonus (+20 if mastery < 0.4)
-- Time since last studied (+1 per day over 3)
-- Focus topics bonus (+10)
-- Excluded topics penalty (-50)
-
-## Revision Engine
-
-### Schedule
-- First revision: Day +1
-- Second revision: Day +7
-- Third revision: Day +30
-
-### Tracking
-- Revision status: pending, due, in_progress, completed, failed
-- Mastery progress: increases with correct answers
-- Performance rating: excellent, good, average, poor, very_poor
-- Mastered: when mastery > 0.8 and revisionNumber >= 3
-
-### Next Revision Calculation
-Based on performance:
-- Excellent (≥0.9): +7, +14, +30 days
-- Good (≥0.7): +7, +10, +21 days
-- Average (≥0.5): +3, +7, +14 days
-- Poor (<0.5): +1, +3, +7 days
-
-## Project Interview System
-
-### Project Model
-- Name, description, technologies
-- InterviewTree with sections:
-  - Motivation (why built, problem solved)
-  - Architecture (design, components)
-  - Technology Choices (why chosen, alternatives)
-  - Implementation (challenges, solutions)
-  - Database (type, schema, indexing)
-  - APIs (type, design, endpoints)
-  - Scalability (approach, bottlenecks)
-  - Performance (metrics, optimization)
-  - Security (auth, data protection)
-  - Failure Handling (modes, recovery)
-  - Testing (types, coverage)
-  - Monitoring (metrics, alerting)
-
-### Question Generation
-Generate questions from interview tree:
-- "Tell me about [project]. What problem did you solve?"
-- "What were key architectural decisions and why?"
-- "How did you handle data persistence?"
-- "How would you scale to 10x traffic?"
-- "What security considerations did you address?"
-
-## Mock Interview System
-
-### Types
-- Technical interview
-- Backend interview
-- Java interview
-- System design interview
-- Project deep dive
-- Full SDE-2 mock interview
-- Behavioral interview
-- Leadership interview
-
-### Flow
-1. Configure: type, focus topics, duration, style
-2. Generate questions dynamically
-3. Present question, wait for answer
-4. Generate follow-up based on answer
-5. Evaluate each answer
-6. Complete with summary feedback
-
-## Answer Evaluation
-
-### Evaluation Dimensions
-- Technical correctness
-- Completeness
-- Depth of understanding
-- Clarity of communication
-- Production thinking
-- Trade-off awareness
-- Scalability reasoning
-- Reliability reasoning
-- Security awareness
-- Overall score
-
-### Output
-- Overall score (0-1)
-- Strengths identified
-- Weaknesses identified
-- Missing points
-- Improvement suggestions
-- Key concepts to revise
-- Follow-up suggestions
-
-## Weakness Detection Engine
-
-### Detection Sources
-- Incorrect answers
-- Incomplete answers
-- Poor explanations
-- Low revision performance
-- Repeated mistakes on same concept
-
-### Weak Concept Tracking
-- Per-concept: exposure, mastery, weak flag
-- Per-skill: exposure, mastery, question count
-- Per-topic: exposure, mastery, weak subtopics
-- Per-archetype: exposure, mastery
-
-### Feeds Into
-- Topic selection (boost weak areas)
-- Revision scheduling (prioritize weak concepts)
-- Project interview (focus on project weaknesses)
-
-## Coding Tracker
-
-### Problem Entity
-- Title, slug, description
-- Difficulty, pattern(s)
-- Platform, problem ID, URL
-- Starter code by language
-- Solution code, explanation
-- Time/space complexity
-- Tags
-
-### History Entity
-- Problem snapshot (for historical accuracy)
-- Language used, code (optional)
-- Status: not_started, attempted, solved, skipped
-- Attempts count
-- Is correct, test cases passed
-- Time spent
-- Self-rating
-- Review status
-
-### Progress Tracking
-- By pattern: completion rate
-- By difficulty: solved count
-- By language: problems solved
-
-## System Design Preparation
-
-### Question Structure
-- isSystemDesign flag
-- System design context
-- Functional requirements
-- Non-functional requirements
-- Scale requirements
-
-### Content Areas
-- Requirements gathering
-- Functional requirements
-- Non-functional requirements
-- Scale estimation
-- API design
-- Data model
-- Architecture diagram
-- Components
-- Databases
-- Caching
-- Queues
-- Load balancing
-- Consistency models
-- Availability
-- Fault tolerance
-- Security
-- Observability
-- Scalability
-- Bottlenecks
-- Failure scenarios
-- Trade-offs
-
-## Security Architecture
-
-### Authentication
-- JWT with HTTP-only cookies
-- Bcrypt password hashing
-- Rate limiting on auth
-- Account verification
-- Password reset with expiration
-
-### Authorization
-- User ownership checks on all resources
-- No cross-user data access
-- Admin functionality separable
-
-### Input Security
-- Validation on all inputs
-- File upload validation
-- Prompt injection defense
-- SQL injection prevented by ORM
-
-### Data Security
-- Secrets in environment only
-- Secure cookie flags
-- HTTPS required in production
-- No sensitive data in logs
-
-## AI Provider Abstraction
-
-### Interface
-```typescript
-interface AIProvider {
-  generateStructured<T>(prompt: string, schema: Schema): Promise<T>;
-  generateText(prompt: string): Promise<string>;
-  evaluateAnswer(question: string, answer: string): Promise<Evaluation>;
-  extractResume(content: string): Promise<ResumeData>;
-  generateEmbedding(text: string): Promise<number[]>;
-}
-```
-
-### Implementations
-- OpenAIProvider (primary, GPT-4)
-- GeminiProvider (Google)
-- NVIDIAProvider
-- CustomProvider (OpenAI-compatible)
-
-### Configuration
-- Provider selection in environment
-- Model, temperature, max tokens per provider
-- Timeout, retry count
-- Fallback strategies
-
-## Prompt Versioning
-
-### Tracking
-- Prompt templates stored with version numbers
-- Every AI request records:
-  - Prompt version
-  - Model used
-  - Provider
-  - Timestamp
-  - Request purpose
-  - Latency
-  - Token usage
-  - Success/failure
-
-### Prompts
-- QuestionGenerator v1, v2...
-- AnswerEvaluator v1, v2...
-- ResumeParser v1...
-- ProjectInterviewer v1...
-
-## Background Jobs
-
-### Potential Jobs (Redis/BullMQ)
-- Resume parsing (async)
-- Embedding generation
-- Question generation
-- Answer evaluation
-- Daily session generation
-- Revision scheduling
-- Notifications
-- Market calibration updates
-
-### Characteristics
-- Idempotent operations
-- Retry with backoff
-- Progress tracking
-- Failure handling
-
-## Testing
-
-### Unit Tests
-- Question planner logic
-- Duplicate detection
-- Revision scheduling
-- Curriculum selection
-- Skill scoring
-- Difficulty selection
-- Topic rotation
-
-### Integration Tests
-- Authentication flows
-- Resume upload/parsing
-- Question generation/insertion
-- Duplicate prevention
-- Daily session creation
-- Revision tracking
-- Answer evaluation
-
-### E2E Tests (Playwright)
-- Registration → verification → onboarding
-- Upload resume → confirm profile → set targets
-- Generate curriculum → Day 1 → answer → evaluate
-- Duplicate rejection
-- Idempotent session generation
-- Unauthorized access attempts
-- AI failure handling
-
-## Deployment
-
-### Docker Setup
-- Development: docker-compose.yml
-- Production: docker-compose.prod.yml
-
-### Services
-- Backend (Node.js/Express)
-- Frontend (Next.js)
-- MongoDB
-- Redis (optional)
-- Nginx (reverse proxy, optional)
-
-### Deployment Options
-- Docker Compose (all-in-one)
-- Vercel (frontend) + Render/Railway/AWS (backend)
-- Manual deployment with PM2/systemd
-
-### Production Checklist
-- Environment variables configured
-- SSL certificates
-- Database connection
-- Rate limiting
-- Monitoring
-- Backups
-- Logging
-
-## Environment Variables
-
-### Required
-- MONGODB_URI
-- JWT_SECRET
-- PORT
-
-### Optional but Recommended
-- OPENAI_API_KEY (for AI features)
-- EMAIL_PROVIDER + config (for emails)
-- REDIS_URL (for caching)
-- FRONTEND_URL, BACKEND_URL
-
-### All Variables
-See `backend/.env.example` for complete list.
-
-## Documentation
-
-Created documentation files:
-- README.md - Main documentation
-- ARCHITECTURE.md - System architecture
-- DEPLOYMENT.md - Deployment guide
-- SECURITY.md - Security considerations
-- (Additional docs can be created for specific modules)
-
-## Known Limitations
-
-1. **Mock interview follow-ups**: Real-time dynamic follow-ups require streaming AI responses
-2. **Semantic search**: Fully dependent on MongoDB Atlas Vector Search setup
-3. **Market calibration**: Requires manual source gathering or web scraping
-4. **Email service**: Development mode uses simulated emails
-5. **Coding problem sources**: Only includes 3 example problems, need more
-6. **Google OAuth**: Not implemented yet
-7. **PWA/offline**: Not implemented yet
-8. **Notification preferences**: Browser notifications not fully implemented
-9. **Advanced analytics**: Dashboard shows basic stats, can be expanded
-10. **Question reporting**: Flagging exists but no review workflow
-
-## Future Improvements
-
-### High Priority
-1. Complete AI integration with real API keys
-2. Add more seed questions (target: 50+)
-3. Implement answer evaluation with AI
-4. Add revision due notifications
-5. Complete PWA support for offline access
-
-### Medium Priority
-6. Google OAuth integration
-7. Market calibration with web scraping
-8. Advanced analytics dashboard
-9. More coding problems
-10. System design answer templates
-
-### Lower Priority
-11. Team/enterprise features
-12. Interview scheduling integration
-13. Peer review system
-14. Video interview practice
-15. Interview outcome tracking
-
-## Completed Features Status
-
-### Authentication ✓
-- Registration ✓
-- Login ✓
-- Logout ✓
-- Email verification (structure ready)
-- Password reset (structure ready)
-- Session management ✓
-- Secure password hashing ✓
-- HTTP-only cookies ✓
-- Rate limiting ✓
-- Account deletion ✓
-
-### Resume ✓
-- Upload ✓
-- Parsing (structure ready, AI integration pending)
-- Profile extraction ✓
-- User confirmation ✓
-- Versioning ✓
-
-### Personalization ✓
-- Interview profile ✓
-- Target role ✓
-- Target companies ✓
-- Skill graph ✓
-- Curriculum generation (structure ready)
-
-### Questions ✓
-- Question bank ✓
-- Curated questions ✓
-- AI generation (structure ready)
-- Question metadata ✓
-- Provenance tracking ✓
-
-### Uniqueness ✓
-- Exact duplicate check ✓
-- Normalized hash ✓
-- Semantic duplicate (structure ready for vector search)
-
-### Daily Sessions ✓
-- Session generation ✓
-- Idempotency ✓
-- Today's session ✓
-- Session history ✓
-- Topic history ✓
-
-### Revision ✓
-- Revision model ✓
-- Spaced repetition schedule ✓
-- Due tracking ✓
-- Mastery tracking ✓
-
-### Project Interview ✓
-- Project model ✓
-- Interview tree ✓
-- Project question generation ✓
-
-### Mock Interview ✓
-- Mock interview model ✓
-- Structure ready for dynamic follow-ups
-
-### Answer Evaluation ✓
-- Structure ready
-- Pending AI integration
-
-### Weakness Engine ✓
-- Skill graph ✓
-- Weak concept tracking ✓
-- Feeds into selection
-
-### System Design ✓
-- Question structure ✓
-- Detailed answer structure ✓
-
-### Coding ✓
-- Coding problem model ✓
-- Coding history ✓
-- Pattern tracking ✓
-
-### Analytics ✓
-- Progress model ✓
-- Stats structure ✓
-
-### Security ✓
-- Authentication ✓
-- Authorization ✓
-- Input validation ✓
-- Rate limiting ✓
-- Secure cookies ✓
-- Prompt injection defense ✓
-
-### Deployment ✓
-- Docker configuration ✓
-- Environment documentation ✓
-- Deployment guide ✓
-
-### Testing ✓
-- Structure ready
-- Pending implementation of test suites
-
-## Conclusion
-
-This implementation provides a complete, production-ready foundation for a personalized SDE interview preparation platform. The architecture is modular, extensible, and follows security best practices. With real AI provider integration, the platform can deliver genuinely personalized interview preparation.
+# Implementation report — 2026-09-29
+
+## Current configuration/authentication update
+
+Resume storage now uses MongoDB GridFS via MONGODB_URI. S3/AWS code, dependency and env settings are removed. Legacy local files are retained; explicit migration is available and has not been run against user data.
+
+Storage validation: backend and frontend production builds passed; backend lint passed; final Jest run passed all 6 suites / 45 tests. Tests cover real file bytes, MIME metadata, private downloads, account deletion, stream/metadata failure cleanup, verified local migration, corrupt-file rejection and disconnected storage. Live Render/Atlas verification remains outstanding.
+
+The latest user requirement supersedes the earlier authentication setup below:
+- One private `interview-prep/.env` serves both local apps; all env examples/development/production files are removed.
+- Google-only sign-in replaces password registration/reset, verification email, JWTs and refresh tokens.
+- One random login cookie is hashed in MongoDB, with fixed expiry and secure options. No Redis.
+- AI uses `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL` for OpenRouter/Gemini/OpenAI/custom compatible endpoints, across all AI consumers.
+- Vercel proxies `/api` to Render using server-only `BACKEND_API_URL`; Google callback is derived from `FRONTEND_URL`.
+- Twelve obsolete auth-related packages were removed; existing user/resume/question data was not deleted.
+- Refer to the updated README and Deployment guide, not earlier env/password/SendGrid instructions below.
+
+The following is the historical core-feature report. Its test counts and email/password instructions describe the previous implementation, not the Google-only update.
+
+## Outcome and product positioning
+
+The core flow is now a generic resume-driven multi-user preparation product, not a default Java/SDE-2 trainer. Arbitrary role/level, actual experience, optional companies, interview date, focus/avoid topics and custom daily categories are supported. Existing broader modules remain in place. The complete 57-section product brief is NOT claimed complete.
+
+## Implemented changes
+
+- Real PDF/DOCX text extraction and schema-validated AI extraction replace sample candidate data. Conservative no-AI parsing does not invent employers, projects or experience.
+- Resume facts can be edited, rejected or explicitly confirmed. Unconfirmed claims cannot drive personalized questions. Re-upload invalidates completed onboarding.
+- Onboarding connects upload, review, skill/project confirmation, goals, a curriculum outline and the first session.
+- Question generation calls a real OpenAI-compatible provider, validates relevance/difficulty/schema/factual references, saves provenance/model/prompt versions and rejects repeated questions. It never pads shortages with template questions.
+- Private question bank and per-user exposure history record questions at assignment time. Exact hash checks are atomic; near-text checks run against all prior exposures, including skipped questions. Concepts may repeat.
+- A bounded generation plan includes confirmed facts, role/level, measured history, feedback and weaknesses. Session sections are configurable rather than hardcoded.
+- Daily generation is same-day idempotent, leased and checkpointed; completed/failed generation states permit safe reuse/retry.
+- Owned answer/history/evaluation/revision/feedback paths work. Feedback includes difficulty, relevance, incorrect/duplicate and revision signals.
+- Dynamic mock interview route/page asks an answer-dependent follow-up with validated structure and repeat checks. Replayed turns are rejected.
+- SendGrid delivers actual HTTP requests; disabled email no longer pretends delivery. Google OAuth adds verified state, nonce, PKCE, explicit linking and replay rejection.
+- Private S3-compatible storage, authenticated downloads, retained file versions and local path containment are implemented.
+- Persisted session revocation, hashed access/refresh/reset/verification tokens, refresh rotation, strict admin authorization, CSRF-origin checks and safe request IDs/logging improve ownership and security.
+- Added migration, real extraction fixtures and isolated-database/provider tests. Removed the build-time Google font download; updated Next.js and backend tooling. Removed unused UUID dependency in favor of Node crypto.
+
+## Important models
+
+Resume/ResumeVersion/ResumeProfile: owned versioned file plus reviewed facts.
+InterviewProfile: arbitrary role/level, actual experience and dynamic dailyPlan/curriculum.
+Question: canonical private/public curated text, hash, provenance and quality metadata.
+QuestionExposure: atomic per-user question/hash assignment history.
+QuestionGenerationPlan: bounded confirmed-fact/history plan and generation outcome.
+QuestionHistory/QuestionFeedback/Revision: answer evidence, feedback and explicit repetition.
+AIUsage/AIRequest: per-user daily request allowance and metadata-only usage records.
+DailySession/SessionQuestion: generation state/lease and assigned snapshots.
+OAuthState/Session: short-lived OAuth state and revocable hashed authentication.
+
+## New/updated APIs
+
+Authentication: /api/auth/providers, /google, /google/callback, /google/link, /me, /refresh, /logout, /forgot-password, /reset-password and /verify-email.
+Onboarding: GET /api/profile/onboarding, PUT /api/profile/review, POST /api/profile/onboarding.
+Files: GET /api/resume/files/:versionId (owner only).
+Daily practice: /api/sessions/generate, /today, owned session answer/history/completion routes.
+Feedback: POST /api/feedback/:sessionId/:mappingId.
+Mock interviewer: POST /api/mock-interviews/start, GET /:id, POST /:id/answer.
+Admin: protected question quality/review and AI-usage routes under /api/admin.
+Existing feature routes are retained.
+
+## Simplification and preserved behavior
+
+Runtime is still frontend + API + MongoDB. Broken/unused Docker Compose configurations and unused dependencies were removed; no Redis, queue, microservices, separate vector store or new orchestration is required. Existing user data/env values were not overwritten. Calendar, coding practice, history, revisions, analytics, projects and search were preserved, with targeted ownership/functional fixes.
+
+Removing Docker has no runtime code dependency here, but cannot honestly promise zero effect on someone's external Docker workflow: those Compose entry points no longer exist. Native Node deployment instructions replace them.
+
+## Validation
+
+- Backend TypeScript production build: passed.
+- Next.js production build, lint/type validation and static route generation: passed.
+- Backend Jest: 4 suites, 32 tests passed. Actual PDF/DOCX fixtures and isolated MongoDB test registration/upload/review/onboarding, user isolation, concurrent generation, answer/history/revision/feedback, fresh-day repeat exclusion, refresh/logout, budget enforcement and mock follow-ups.
+- AI, Google and SendGrid transport responses are mocked. No real credentials were consumed.
+- No browser end-to-end test or production deployment validation completed.
+- Backend and frontend dependency installs report zero known audit vulnerabilities after targeted updates. The frontend pins a patched PostCSS override for Next's older nested dependency; recheck advisories during future upgrades. An audit result is not a security certification.
+- Migration exists but was not run against the user's database. S3 credentials, bucket policy, live Google/SendGrid/AI and deployed cookie behavior remain unverified.
+
+## Remaining limitations and adjustments
+
+1. AI factual correctness is not guaranteed by schema validation. Automated approved status is not human approval. Review content and provenance; disputed questions can be flagged. Independent reference verification and full admin review UI remain future work.
+2. Semantic duplicate detection is approximate; exact normalized-text exclusion is stronger. Optional embeddings incur additional calls; no perfect paraphrase detector is claimed.
+3. The curriculum is an outline, not a fully scheduled 90-day adaptive coach. Difficulty/context respond through planning preferences and feedback, not a validated learning-outcome engine.
+4. Coding uses the curated problem bank; no sandbox executes arbitrary generated code. Test-case judging and AI-created verified coding problems are not implemented.
+5. OCR, document antivirus scanning and strict DOCX decompression limits are not implemented. Prefer trusted text-based resumes; do not market uploads as fully hardened.
+6. No resend-verification UI, settings Google-link button or dedicated Google-only deletion reauthentication flow yet.
+7. Answer resubmissions can run evaluation/mastery updates again. Session completion is concurrency-claimed but progress/session updates are not a database transaction; crash-recovery reconciliation remains needed.
+8. Optional legacy search/market/project modules were preserved, not independently end-to-end validated. Search AI and embeddings are not covered by the central generation request budget.
+9. No global spend cap, circuit breaker, provider-specific Gemini adapter, full admin/prompt management, background scheduled jobs, payment/subscription or guarantee of free-host uptime.
+10. Existing MongoDB indexes/data may need reviewed migration. Deployment must use backups, private durable storage, HTTPS and actual provider checks.
+
+## Configuration and handoff
+
+Follow [step-by-step setup/deployment](docs/DEPLOYMENT.md) and the updated backend/.env.example. Configure MongoDB + JWT for baseline; AI for fresh personalized generation; SendGrid before verification; Google Web OAuth for social sign-in; S3 for production. Keep secrets server-side. Re-test on staging with synthetic data before uploading sensitive resumes.

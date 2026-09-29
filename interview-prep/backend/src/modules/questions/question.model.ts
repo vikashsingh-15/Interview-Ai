@@ -68,6 +68,7 @@ export type QuestionArchetype =
 export interface IQuestion {
   _id: mongoose.Types.ObjectId;
 
+  ownerUserId?: mongoose.Types.ObjectId;
   // Core question
   question: string;
   topic: string;
@@ -195,6 +196,7 @@ export interface IQuestionDocument extends IQuestion, Document {}
 // Question Schema
 const questionSchema = new Schema<IQuestion>(
   {
+    ownerUserId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     // Core question
     question: {
       type: String,
@@ -287,7 +289,6 @@ const questionSchema = new Schema<IQuestion>(
     // Uniqueness
     normalizedHash: {
       type: String,
-      index: true,
     },
     embedding: [Number],
     embeddingModel: String,

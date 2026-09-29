@@ -41,7 +41,7 @@ const DIFFICULTY_OPTIONS: Array<{
   {
     value: 'mixed',
     label: 'Mixed (default)',
-    description: 'A blend: 20% easy, 50% medium, 20% hard, 10% expert',
+    description: 'A mix appropriate to your profile and the planned questions',
     color: 'bg-brand-secondary',
   },
 ];
@@ -60,7 +60,7 @@ const COUNT_FIELDS: Array<{
     key: 'dailyQuestions',
     label: 'Technical / interview questions per day',
     description: 'Core concept questions on your chosen topic',
-    min: 1,
+    min: 0,
     max: 50,
   },
   {
@@ -81,7 +81,7 @@ const COUNT_FIELDS: Array<{
     key: 'projectQuestions',
     label: 'Project interview questions per day',
     description: 'Deep dives into your resume projects',
-    min: 3,
+    min: 0,
     max: 10,
   },
 ];
@@ -157,6 +157,7 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-brand-background">
       <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10">
         <h1 className="text-3xl font-bold text-brand-primary">Session Settings</h1>
+        <a href="/api/auth/google/link" className="text-blue-700 underline">Link or re-confirm Google for this account</a>
         <p className="mt-2 text-brand-textSecondary">
           Choose how many questions you get each day and how hard they should be.
         </p>

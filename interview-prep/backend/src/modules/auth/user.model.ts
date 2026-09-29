@@ -1,14 +1,13 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
-import bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
-import config from '../../config';
 
 // Interfaces
 export interface IUser {
   _id: mongoose.Types.ObjectId;
   email: string;
-  passwordHash: string;
+  passwordHash?: string; // Hidden legacy data; password authentication is removed.
   name: string;
+  googleId?: string;
+  role: 'user' | 'admin';
   isEmailVerified: boolean;
   emailVerificationToken?: string;
   emailVerificationExpires?: Date;
@@ -33,10 +32,7 @@ export interface IUser {
   updatedAt: Date;
 }
 
-export interface IUserDocument extends IUser, Document {
-  comparePassword(candidatePassword: string): Promise<boolean>;
-  hashPassword(password: string): Promise<string>;
-}
+export interface IUserDocument extends IUser, Document {}
 
 // Schema
 const userSchema = new Schema<IUser>(
@@ -49,9 +45,11 @@ const userSchema = new Schema<IUser>(
       trim: true,
       index: true,
     },
+    googleId: { type: String, unique: true, sparse: true, select: false },
+    role: { type: String, enum: ['user', 'admin'], default: 'user' },
     passwordHash: {
       type: String,
-      required: true,
+      required: false,
       select: false,
     },
     name: {
@@ -63,9 +61,9 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
-    emailVerificationToken: String,
+    emailVerificationToken: { type: String, select: false },
     emailVerificationExpires: Date,
-    passwordResetToken: String,
+    passwordResetToken: { type: String, select: false },
     passwordResetExpires: Date,
     isAccountDeleted: {
       type: Boolean,
@@ -73,16 +71,16 @@ const userSchema = new Schema<IUser>(
     },
     accountDeletedAt: Date,
     preferences: {
-      dailyQuestions: { type: Number, default: 10 },
-      codingCount: { type: Number, default: 2 },
-      systemDesignCount: { type: Number, default: 2 },
-      projectQuestions: { type: Number, default: 5 },
+      dailyQuestions: { type: Number, default: 5 },
+      codingCount: { type: Number, default: 0 },
+      systemDesignCount: { type: Number, default: 0 },
+      projectQuestions: { type: Number, default: 0 },
       studyDays: { type: Number, default: 90 },
       focusTopics: { type: [String], default: [] },
       excludedTopics: { type: [String], default: [] },
       revisionFrequency: { type: String, enum: ['daily', 'weekly', 'biweekly'], default: 'daily' },
       mockInterviewDuration: { type: Number, default: 45 },
-      notifyEmail: { type: Boolean, default: true },
+      notifyEmail: { type: Boolean, default: false },
       notifyBrowser: { type: Boolean, default: true },
     },
   },
@@ -96,28 +94,6 @@ const userSchema = new Schema<IUser>(
 // Indexes
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ isAccountDeleted: 1, emailVerificationToken: 1 });
-
-// Methods
-userSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
-  return bcrypt.compare(candidatePassword, this.passwordHash);
-};
-
-userSchema.methods.hashPassword = async function(password: string): Promise<string> {
-  const salt = await bcrypt.genSalt(config.auth.bcryptRounds);
-  return bcrypt.hash(password, salt);
-};
-
-// Pre-save hook for password hashing
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('passwordHash')) {
-    return next();
-  }
-  // If passwordHash looks like a plain password (not already hashed), hash it
-  if (this.passwordHash && !this.passwordHash.startsWith('$2')) {
-    this.passwordHash = await bcrypt.hash(this.passwordHash, config.auth.bcryptRounds);
-  }
-  next();
-});
 
 // Virtual for full name
 userSchema.virtual('fullName').get(function() {

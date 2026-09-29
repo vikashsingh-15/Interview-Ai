@@ -79,6 +79,10 @@ export interface IDailySession {
   sessionDate: Date;
   userDayNumber: number;
 
+  generationState?: string;
+  generationOwner?: string;
+  generationStartedAt?: Date;
+  generationMessage?: string;
   // Status
   status: SessionStatus;
   startedAt?: Date;
@@ -208,7 +212,7 @@ const sessionQuestionSchema = new Schema<ISessionQuestion>({
   userNotes: String,
   bookmarked: { type: Boolean, default: false },
   flagged: { type: Boolean, default: false },
-});
+}, { timestamps: true });
 
 // Daily Session Schema
 const dailySessionSchema = new Schema<IDailySession>(
@@ -222,6 +226,10 @@ const dailySessionSchema = new Schema<IDailySession>(
     },
 
     // Session identification
+    generationState: { type: String, enum: ['generating','completed','failed'], default: 'generating' },
+    generationOwner: String,
+    generationStartedAt: Date,
+    generationMessage: String,
     sessionDate: {
       type: Date,
       required: true,
@@ -370,38 +378,19 @@ dailySessionSchema.methods.recordQuestionAnswer = async function(
   answerTimeSeconds: number,
   score: number
 ) {
-  // Find the section containing this question
+  // Sections store mapping IDs, not embedded questions. Recompute, don't increment on retries.
+  const mapped = await mongoose.model('SessionQuestion').find({ sessionId:this._id }).lean();
+  const answered = mapped.filter(q=>q.status === 'answered');
   for (const section of this.sections) {
-    const question = section.questions.id(questionId);
-    if (question) {
-      question.status = 'answered';
-      question.answer = answer;
-      question.answerTimeSeconds = answerTimeSeconds;
-      question.answerSubmittedAt = new Date();
-      question.finalScore = score;
-
-      // Update section progress
-      section.completedQuestions += 1;
-      if (score >= 0.7) {
-        section.status = 'completed';
-      }
-
-      // Update session totals
-      this.completedQuestions += 1;
-      this.correctQuestions += score >= 0.7 ? 1 : 0;
-
-      // Recalculate average score
-      const allQuestionsInSession = await mongoose.model('SessionQuestion')
-        .find({ sessionId: this._id });
-      const totalScore = allQuestionsInSession.reduce((sum, q) => sum + (q.finalScore || 0), 0);
-      this.averageScore = allQuestionsInSession.length > 0
-        ? totalScore / allQuestionsInSession.length
-        : 0;
-
-      await this.save();
-      break;
-    }
+    const entries = mapped.filter(q=>String(q.sectionId) === String(section._id) ||
+      section.questions.some((id:any)=>String(id) === String(q._id)));
+    section.completedQuestions = entries.filter(q=>q.status === 'answered').length;
+    section.status = section.completedQuestions >= section.totalQuestions && section.totalQuestions > 0 ? 'completed' : 'pending';
   }
+  this.completedQuestions = answered.length;
+  this.correctQuestions = answered.filter(q=>(q.finalScore || 0) >= 0.7).length;
+  this.averageScore = answered.length ? answered.reduce((sum,q)=>sum+(q.finalScore || 0),0)/answered.length : 0;
+  await this.save();
 
   return this;
 };

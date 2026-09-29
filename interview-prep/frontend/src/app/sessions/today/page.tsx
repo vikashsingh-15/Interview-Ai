@@ -37,6 +37,8 @@ interface SessionDetail {
   sessionId: string;
   userDayNumber: number;
   status: string;
+  generationState?: 'generating' | 'completed' | 'failed';
+  generationMessage?: string;
   totalQuestions: number;
   completedQuestions: number;
   averageScore: number;
@@ -82,7 +84,7 @@ function scoreBg(score: number): string {
 }
 
 export default function TodaySessionPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
@@ -93,13 +95,15 @@ export default function TodaySessionPage() {
   const [result, setResult] = useState<AnswerResult | null>(null);
   const [showReference, setShowReference] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [retryingQuestions, setRetryingQuestions] = useState(false);
   const [completed, setCompleted] = useState<{ averageScore: number; correctQuestions: number } | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
     if (!isAuthenticated) {
       redirect('/login');
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authLoading]);
 
   const loadSession = useCallback(async () => {
     try {
@@ -167,6 +171,22 @@ export default function TodaySessionPage() {
     setResult(null);
     setAnswerText('');
     setCurrentIndex((i) => Math.min(i + 1, questions.length));
+  };
+
+  const retryQuestionGeneration = async () => {
+    if (!session || retryingQuestions) return;
+    setRetryingQuestions(true);
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.post('/sessions/generate', { retryEmpty: true });
+      await loadSession();
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || err?.response?.data?.message || 'Could not generate questions. Check your AI provider settings and try again.');
+      setIsLoading(false);
+    } finally {
+      setRetryingQuestions(false);
+    }
   };
 
   const handleComplete = async () => {
@@ -257,6 +277,38 @@ export default function TodaySessionPage() {
     );
   }
 
+  // ---- Empty session: generation did not produce questions ----
+  if (!currentQuestion && questions.length === 0) {
+    const generating = session?.generationState === 'generating';
+    return (
+      <div className="min-h-screen bg-brand-background py-12 px-4">
+        <div className="mx-auto max-w-2xl">
+          <Card>
+            <CardContent className="p-10 text-center">
+              <h1 className="text-2xl font-bold text-brand-primary">
+                {generating ? 'Generating questions' : 'No questions generated yet'}
+              </h1>
+              <p className="mt-2 text-brand-textSecondary">
+                {session?.generationMessage || 'This session does not have any questions yet. Check your AI provider settings, then retry.'}
+              </p>
+              {error && error !== session?.generationMessage && (
+                <p role="alert" className="mt-4 text-sm text-red-600">{error}</p>
+              )}
+              <div className="mt-8 flex gap-3 justify-center">
+                <Button onClick={retryQuestionGeneration} isLoading={retryingQuestions} disabled={generating}>
+                  {generating ? 'Generation in progress' : 'Retry question generation'}
+                </Button>
+                <Link href="/dashboard">
+                  <Button variant="secondary">Dashboard</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   // ---- All answered ----
   if (!currentQuestion) {
     return (
@@ -323,6 +375,16 @@ export default function TodaySessionPage() {
             )}
           </CardHeader>
           <CardContent>
+            <label className="block mb-4 text-sm">Feedback
+              <select className="block border rounded p-2 mt-1" defaultValue="" onChange={async e=>{
+                const kind=e.target.value;if(!kind || !session) return;
+                try { await api.post('/feedback/'+session.sessionId+'/'+q.id,{kind});setError('Feedback saved'); }
+                catch { setError('Could not save feedback'); }
+              }}>
+                <option value="" disabled>Choose feedback</option>
+                {['too_easy','too_hard','already_know','not_relevant','duplicate','incorrect','need_revision','skipped'].map(v=><option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
+              </select>
+            </label>
             {!result ? (
               <>
                 <Textarea

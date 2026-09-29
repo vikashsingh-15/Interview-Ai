@@ -3,6 +3,8 @@ import mongoose, { Schema, Document, Model } from 'mongoose';
 // Interfaces
 export interface IResumeVersion {
   _id: mongoose.Types.ObjectId;
+  userId?: mongoose.Types.ObjectId;
+  storageProvider?: string;
   versionNumber: number;
   originalFilename: string;
   mimeType: string;
@@ -39,6 +41,9 @@ export interface IResumeDocument extends IResume, Document {}
 // Resume Version Schema
 const resumeVersionSchema = new Schema<IResumeVersion>(
   {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // Historical labels remain readable; new uploads explicitly select GridFS.
+    storageProvider: { type: String },
     versionNumber: {
       type: Number,
       required: true,

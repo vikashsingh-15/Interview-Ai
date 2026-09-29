@@ -9,12 +9,9 @@ dist/
 .next/
 /out/
 
-# Environment files
+# One private local env file. Never commit credentials.
 .env
-.env.local
-.env.*.local
-.env.development.local
-.env.production.local
+.env.*
 
 # Logs
 logs/

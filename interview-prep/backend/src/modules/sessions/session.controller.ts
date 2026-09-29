@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
-import { asyncHandler } from '../../common/filters/error-filter';
+import { asyncHandler, NotFoundError } from '../../common/filters/error-filter';
 import { sessionService } from './session.service';
 import { DailySession } from './daily-session.model';
 import mongoose from 'mongoose';
@@ -19,7 +19,9 @@ router.post(
 
     const date = new Date(req.body.date || Date.now());
 
-    const session = await sessionService.generateDailySession(req.user.id, date);
+    const session = await sessionService.generateDailySession(req.user.id, date, {
+      retryEmpty: req.body?.retryEmpty === true,
+    });
 
     res.json({
       success: true,
@@ -27,6 +29,8 @@ router.post(
         sessionId: session._id,
         sessionDate: session.sessionDate,
         userDayNumber: session.userDayNumber,
+        generationState: session.generationState,
+        generationMessage: session.generationMessage,
         status: session.status,
         totalQuestions: session.totalQuestions,
         sections: session.sections?.map((section: any) => ({
@@ -57,7 +61,8 @@ router.get(
 
     // If no session exists, generate one
     if (!session) {
-      session = await sessionService.generateDailySession(req.user.id);
+      await sessionService.generateDailySession(req.user.id);
+      session = await sessionService.getTodaysSession(req.user.id);
     }
 
     res.json({
@@ -67,6 +72,8 @@ router.get(
         sessionDate: session.sessionDate,
         userDayNumber: session.userDayNumber,
         status: session.status,
+        generationState: session.generationState,
+        generationMessage: session.generationMessage,
         totalQuestions: session.totalQuestions,
         completedQuestions: session.completedQuestions,
         averageScore: session.averageScore,
@@ -113,7 +120,7 @@ router.get(
 
 // Get session by ID
 router.get(
-  '/:sessionId',
+  '/:sessionId([a-fA-F0-9]{24})',
   authenticate,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!req.user) {
@@ -125,7 +132,7 @@ router.get(
     const session = await sessionService.getSessionById(sessionId, req.user.id);
 
     if (!session) {
-      throw new Error('Session not found');
+      throw new NotFoundError('Session not found');
     }
 
     res.json({
@@ -135,6 +142,8 @@ router.get(
         sessionDate: session.sessionDate,
         userDayNumber: session.userDayNumber,
         status: session.status,
+        generationState: session.generationState,
+        generationMessage: session.generationMessage,
         startedAt: session.startedAt,
         completedAt: session.completedAt,
         totalTimeSeconds: session.totalTimeSeconds,

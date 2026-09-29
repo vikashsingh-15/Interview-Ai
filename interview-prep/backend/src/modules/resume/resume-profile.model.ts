@@ -20,10 +20,12 @@ export type SkillCategory =
 
 // Experience entry
 export interface IExperience {
+  isConfirmed?: boolean;
+  isRemoved?: boolean;
   company: string;
   role: string;
   location?: string;
-  startDate: Date | string;
+  startDate?: Date | string;
   endDate: Date | string | null;
   currentRole: boolean;
   totalMonths?: number;
@@ -37,6 +39,8 @@ export interface IExperience {
 
 // Project entry
 export interface IProject {
+  isConfirmed?: boolean;
+  isRemoved?: boolean;
   name: string;
   description: string;
   startDate?: Date | string;
@@ -121,7 +125,7 @@ export interface IResumeProfile {
   extractedAt: Date;
 
   // User modifications
-  isModified: boolean;
+  userModified: boolean;
   modifiedAt?: Date;
 
   createdAt: Date;
@@ -182,6 +186,8 @@ const resumeProfileSchema = new Schema<IResumeProfile>(
       isRemoved: { type: Boolean, default: false },
     }],
     experience: [{
+      isConfirmed: { type: Boolean, default: false },
+      isRemoved: { type: Boolean, default: false },
       company: { type: String, required: true },
       role: { type: String, required: true },
       location: String,
@@ -196,6 +202,8 @@ const resumeProfileSchema = new Schema<IResumeProfile>(
       technicalClaims: [String],
     }],
     projects: [{
+      isConfirmed: { type: Boolean, default: false },
+      isRemoved: { type: Boolean, default: false },
       name: { type: String, required: true },
       description: { type: String, required: true },
       startDate: Date,
@@ -249,7 +257,7 @@ const resumeProfileSchema = new Schema<IResumeProfile>(
     },
 
     // User modifications
-    isModified: {
+    userModified: {
       type: Boolean,
       default: false,
     },
@@ -262,7 +270,7 @@ const resumeProfileSchema = new Schema<IResumeProfile>(
 
 // Compound indexes
 resumeProfileSchema.index({ userId: 1, resumeVersionId: 1 }, { unique: true });
-resumeProfileSchema.index({ userId: 1, isModified: 1 });
+resumeProfileSchema.index({ userId: 1, userModified: 1 });
 resumeProfileSchema.index({ userId: 1, 'skills.name': 1, 'skills.isRemoved': 1 });
 resumeProfileSchema.index({ userId: 1, 'experience.company': 1 });
 resumeProfileSchema.index({ userId: 1, 'projects.name': 1 });
@@ -273,7 +281,7 @@ resumeProfileSchema.methods.confirmSkill = async function(skillName: string) {
   if (skill) {
     skill.isConfirmed = true;
     skill.source = 'user';
-    this.isModified = true;
+    this.userModified = true;
     this.modifiedAt = new Date();
     await this.save();
   }

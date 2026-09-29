@@ -34,67 +34,6 @@ export function validate(...validations: ValidationChain[]) {
 }
 
 // Common validation chains
-export const registerValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .trim()
-    .withMessage('Valid email is required')
-    .isLength({ max: 255 })
-    .withMessage('Email must be less than 255 characters'),
-  body('password')
-    .isLength({ min: 8, max: 128 })
-    .withMessage('Password must be between 8 and 128 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
-  body('name')
-    .trim()
-    .notEmpty()
-    .withMessage('Name is required')
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Name must be between 2 and 100 characters'),
-];
-
-export const loginValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .trim()
-    .withMessage('Valid email is required'),
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
-];
-
-export const verifyEmailValidation = [
-  body('token')
-    .notEmpty()
-    .withMessage('Verification token is required')
-    .isLength({ min: 10 })
-    .withMessage('Invalid verification token'),
-];
-
-export const resetPasswordValidation = [
-  body('token')
-    .notEmpty()
-    .withMessage('Reset token is required')
-    .isLength({ min: 10 })
-    .withMessage('Invalid reset token'),
-  body('password')
-    .isLength({ min: 8, max: 128 })
-    .withMessage('Password must be between 8 and 128 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
-  body('confirmPassword')
-    .custom((value, { req }) => {
-      if (value !== req.body.password) {
-        throw new Error('Passwords do not match');
-      }
-      return true;
-    })
-    .withMessage('Passwords must match'),
-];
-
 export const updateProfileValidation = [
   body('name')
     .optional()

@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { createAIClient, hasAI } from '../../common/services/ai-provider';
 import config from '../../config';
 import logger from '../../config/logger';
 import { SearchResult, SynthesizedAnswer } from './web-search.types';
@@ -12,20 +13,8 @@ import { SearchResult, SynthesizedAnswer } from './web-search.types';
  * available.
  */
 
-let cachedClient: OpenAI | null = null;
-
 function getClient(): OpenAI | null {
-  if (cachedClient) return cachedClient;
-
-  const apiKey = config.ai.providers.openai.apiKey;
-  if (!apiKey) return null;
-
-  cachedClient = new OpenAI({
-    apiKey,
-    timeout: config.ai.providers.openai.timeout,
-    maxRetries: Math.min(config.ai.providers.openai.retryCount, 3),
-  });
-  return cachedClient;
+  return hasAI() ? createAIClient() : null;
 }
 
 const MAX_CONTEXT_CHARS = 8000;
@@ -45,7 +34,7 @@ export async function synthesizeAnswer(
       const context = buildContext(query, results, pages);
 
       const completion = await client.chat.completions.create({
-        model: config.ai.providers.openai.model,
+        model: config.ai.model,
         temperature: 0.2,
         max_tokens: 700,
         messages: [
@@ -169,9 +158,9 @@ function heuristicAnswer(
 }
 
 function clientlessNote(): string[] {
-  return config.ai.providers.openai.apiKey
+  return config.ai.apiKey
     ? ['Answer synthesized by an AI model; verify critical details against the linked sources.']
-    : ['Heuristic extract-based answer (no AI key configured). Set OPENAI_API_KEY for cleaner summaries.'];
+    : ['Heuristic extract-based answer (no AI key configured). Set AI_API_KEY for cleaner summaries.'];
 }
 
 function clamp01(n: unknown): number {

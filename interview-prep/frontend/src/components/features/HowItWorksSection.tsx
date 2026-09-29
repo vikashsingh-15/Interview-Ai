@@ -19,7 +19,7 @@ const steps = [
   {
     number: '04',
     title: 'Set Your Targets',
-    description: 'Choose your target role (SDE-2, Backend, etc.), experience level, and target companies.',
+    description: 'Choose your target role (personalized, Backend, etc.), experience level, and target companies.',
   },
   {
     number: '05',

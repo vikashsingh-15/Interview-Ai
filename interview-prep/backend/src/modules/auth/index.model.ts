@@ -10,7 +10,6 @@ export interface ISession {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
   token: string;
-  refreshToken?: string;
   deviceInfo?: string;
   ipAddress?: string;
   userAgent?: string;
@@ -36,14 +35,12 @@ const sessionSchema = new Schema<ISession>(
       unique: true,
       index: true,
     },
-    refreshToken: String,
     deviceInfo: String,
     ipAddress: String,
     userAgent: String,
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
     },
     isActive: {
       type: Boolean,
@@ -57,7 +54,7 @@ const sessionSchema = new Schema<ISession>(
 );
 
 sessionSchema.index({ userId: 1, expiresAt: 1 });
-sessionSchema.index({ token: 1 }, { unique: true });
+sessionSchema.index({ expiresAt:1 });
 sessionSchema.index({ userId: 1, isActive: 1 });
 
 const Session: Model<ISessionDocument> = mongoose.model<ISessionDocument>('Session', sessionSchema as any);

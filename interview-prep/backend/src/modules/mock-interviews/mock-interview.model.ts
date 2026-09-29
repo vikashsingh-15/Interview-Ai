@@ -18,6 +18,8 @@ export type InterviewStatus = 'scheduled' | 'in_progress' | 'completed' | 'aband
 
 // Mock interview
 export interface IMockInterview {
+  turnInProgress?: boolean;
+  turnStartedAt?: Date;
   _id: mongoose.Types.ObjectId;
 
   // User reference
@@ -117,6 +119,8 @@ const mockInterviewSchema = new Schema<IMockInterview>(
       index: true,
     },
 
+    turnInProgress: { type: Boolean, default: false },
+    turnStartedAt: Date,
     // Interview configuration
     type: {
       type: String,

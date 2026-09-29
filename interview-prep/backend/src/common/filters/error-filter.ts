@@ -115,6 +115,12 @@ export function errorHandler(
     isOperational = err.isOperational;
     errors = (err as any).errors;
   }
+  else if ((err as any).name === 'ZodError') {
+    statusCode = 400;
+    message = 'Invalid request data';
+    code = 'VALIDATION_ERROR';
+    isOperational = true;
+  }
   // Handle JSON parsing errors
   else if (err instanceof SyntaxError && (err as any).body) {
     statusCode = 400;
@@ -153,7 +159,7 @@ export function errorHandler(
       requestId,
       error: err.message,
       stack: err.stack,
-      url: req.originalUrl,
+      url: req.path,
       method: req.method,
     });
   } else {
@@ -161,7 +167,7 @@ export function errorHandler(
       requestId,
       error: err.message,
       code,
-      url: req.originalUrl,
+      url: req.path,
       method: req.method,
     });
   }

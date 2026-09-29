@@ -23,7 +23,7 @@ export const rateLimiter = rateLimit({
   handler: (req, res) => {
     logger.warn('Rate limit exceeded', {
       ip: req.ip,
-      url: req.originalUrl,
+      url: req.path,
       method: req.method,
     });
     res.status(429).json({

@@ -9,7 +9,7 @@ const logFormat = winston.format.combine(
 
 // Create logger
 const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
+  level: 'info',
   format: logFormat,
   defaultMeta: { service: 'interview-prep-backend' },
   transports: [

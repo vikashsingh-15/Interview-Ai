@@ -14,10 +14,10 @@ const PREFERENCE_NUMBER_FIELDS: Array<{
   min: number;
   max: number;
 }> = [
-  { field: 'dailyQuestions', min: 1, max: 50 },
-  { field: 'codingCount', min: 1, max: 10 },
-  { field: 'systemDesignCount', min: 1, max: 10 },
-  { field: 'projectQuestions', min: 3, max: 10 },
+  { field: 'dailyQuestions', min: 0, max: 50 },
+  { field: 'codingCount', min: 0, max: 10 },
+  { field: 'systemDesignCount', min: 0, max: 10 },
+  { field: 'projectQuestions', min: 0, max: 10 },
 ];
 
 /**
@@ -114,6 +114,18 @@ router.put(
       profile.preferences[field] = value;
     }
     // Mark subdocument path modified so mongoose persists the change
+    // Synchronize the editable counts with the dynamic daily plan.
+    if (profile.dailyPlan?.length) {
+      const mapping: Record<string,string> = { coding:'codingCount', system_design:'systemDesignCount', project:'projectQuestions' };
+      for (const field of ['dailyQuestions','codingCount','systemDesignCount','projectQuestions']) {
+        if (update[field] === undefined) continue;
+        const sections = profile.dailyPlan.filter(section=>(mapping[section.type] || 'dailyQuestions')===field);
+        sections.forEach((section,index)=>{
+          section.count=Math.floor(update[field]/sections.length)+(index<update[field]%sections.length?1:0);
+        });
+      }
+      profile.markModified('dailyPlan');
+    }
     profile.markModified('preferences');
     await profile.save();
 
@@ -253,7 +265,7 @@ router.post(
       if (entry) {
         (entry as any).knewAnswer = true;
         entry.status = 'completed';
-        entry.score = 1;
+        // Self-reported knowledge is not objective correctness; preserve the measured score.
 
         // Recompute totals (count correct as one more)
         const totals = record.totals || ({} as any);
@@ -262,7 +274,7 @@ router.post(
             (e: any) => e.status === 'answered' || e.status === 'completed'
           ).length;
         totals.correct =
-          (record.entries || []).filter((e: any) => e.status === 'completed').length;
+          (record.entries || []).filter((e: any) => typeof e.score === 'number' && e.score >= 0.7).length;
         const scoreValues = (record.entries || [])
           .map((e: any) => (typeof e.score === 'number' ? e.score : undefined))
           .filter((s: any): s is number => typeof s === 'number');

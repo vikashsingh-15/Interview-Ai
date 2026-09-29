@@ -1,8 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs/promises';
-import { v4 as uuidv4 } from 'uuid';
 import config from '../../config';
 import { BadRequestError, asyncHandler } from '../../common/filters/error-filter';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
@@ -13,7 +11,17 @@ import ResumeProfile from './resume-profile.model';
 import { NotFoundError } from '../../common/filters/error-filter';
 import { z } from 'zod';
 
+import { resumeStorage } from '../../common/services/resume-storage';
 const router = Router();
+router.get('/files/:id', authenticate, asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const resume=await Resume.findOne({userId:req.user!.id,isDeleted:false,versions:req.params.id});
+  if(!resume) throw new NotFoundError('Resume version not found');
+  const version=await ResumeVersion.findById(req.params.id);
+  if(!version) throw new NotFoundError('Resume version not found');
+  const bytes=await resumeStorage.get(version.storageKey,version.storageProvider || 'local');
+  res.setHeader('Cache-Control','no-store');
+  res.type(version.mimeType).attachment(path.basename(version.originalFilename)).send(bytes);
+}));
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -241,7 +249,7 @@ router.get(
         education: profile.education,
         certifications: profile.certifications,
         confidence: profile.confidence,
-        isModified: profile.isModified,
+        isModified: profile.userModified,
       },
     });
   })

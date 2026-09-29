@@ -1,431 +1,82 @@
-# Deployment Guide
+# One env file: Vercel frontend + Render backend
 
-## Prerequisites
+## Local development
 
-- Node.js 18+
-- MongoDB (Atlas recommended for production)
-- Redis (optional but recommended)
-- Docker (optional)
-- Domain name (for production)
-
-## Production Environment Variables
-
-Create `.env.production`:
+Use Node.js 22 LTS. Edit only interview-prep/.env. Both apps load that file; shell/hosting values take precedence. No .env.example, .env.development, .env.production or frontend env file is required.
 
 ```env
-# Server
-NODE_ENV=production
-PORT=3001
-
-# Database - MongoDB Atlas
-MONGODB_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/interview-prep?retryWrites=true&w=majority
-
-# Authentication
-JWT_SECRET=<generate-with-openssl-rand-hex-64>
-JWT_EXPIRES_IN=7d
-BCRYPT_ROUNDS=12
-
-# Cookie Security
-SESSION_COOKIE_SECURE=true
-SESSION_COOKIE_SAME_SITE=strict
-
-# Email
-EMAIL_PROVIDER=sendgrid
-EMAIL_FROM=noreply@yourdomain.com
-SENDGRID_API_KEY=<your-sendgrid-api-key>
-
-# AI Providers
-OPENAI_API_KEY=<your-openai-api-key>
-OPENAI_MODEL=gpt-4
-AI_DEFAULT_PROVIDER=openai
-
-# Redis
-REDIS_URL=redis://:<password>@<redis-host>:6379
-
-# Features
-VECTOR_SEARCH_ENABLED=true
-EMAIL_VERIFICATION_ENABLED=true
-NOTIFICATIONS_ENABLED=true
-
-# URLs
-FRONTEND_URL=https://app.yourdomain.com
-BACKEND_URL=https://api.yourdomain.com
-
-# Rate Limiting
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
+MONGODB_URI=mongodb://localhost:27017/interview-prep-dev
+FRONTEND_URL=http://localhost:3000
+BACKEND_API_URL=http://localhost:3001
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+AI_PROVIDER=openrouter
+AI_API_KEY=
+AI_MODEL=
+AI_BASE_URL=
 ```
 
-## Deployment Options
-
-### Option 1: Docker Compose (Recommended)
-
-1. **Configure Docker environment**:
-```bash
-cp docker/.env.example docker/.env
-# Edit docker/.env with production values
-```
-
-2. **Build and start**:
-```bash
-docker-compose -f docker/docker-compose.prod.yml up -d --build
-```
-
-3. **Seed the database**:
-```bash
-docker-compose -f docker/docker-compose.prod.yml exec backend npm run seed
-```
-
-### Option 2: Manual Deployment
-
-#### Backend
-
-1. **Build**:
-```bash
-cd backend
-npm run build
-```
-
-2. **Start with PM2**:
-```bash
-npm install -g pm2
-pm2 start dist/index.js --name interview-prep-api
-pm2 save
-pm2 startup
-```
-
-3. **Or with systemd**:
-```bash
-# Create service file
-sudo nano /etc/systemd/system/interview-prep.service
-```
-
-```ini
-[Unit]
-Description=Interview Prep API
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/interview-prep/backend
-ExecStart=/usr/bin/node dist/index.js
-Environment=NODE_ENV=production
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable interview-prep
-sudo systemctl start interview-prep
-```
-
-#### Frontend (Next.js)
-
-1. **Build**:
-```bash
-cd frontend
-npm run build
-```
-
-2. **Serve with PM2**:
-```bash
-npm install -g pm2
-pm2 start npm --name interview-prep-web -- start
-```
-
-3. **Or use Vercel** (recommended for Next.js):
-- Connect your GitHub repo
-- Configure environment variables
-- Deploy
-
-### Option 3: Platform-as-a-Service
-
-#### Render
-1. Connect GitHub repo
-2. Configure:
-   - Environment: Node
-   - Build Command: `npm install && cd frontend && npm install && cd ../backend && npm install`
-   - Start Command: `cd backend && npm start`
-3. Add environment variables
-4. Set up MongoDB Atlas database
-
-#### Railway
-1. Connect GitHub repo
-2. Add MongoDB service
-3. Add Redis service (optional)
-4. Configure environment variables
-5. Deploy
-
-#### AWS
-
-1. **ECS/Fargate**:
-   - Create task definition
-   - Create services for backend, frontend
-   - Set up ALB
-   - Configure environment variables
-
-2. **Elastic Beanstalk**:
-   - Create Node.js environment
-   - Configure environment properties
-   - Deploy
-
-## Database Setup
-
-### MongoDB Atlas (Recommended)
-
-1. **Create cluster** at mongodb.com/cloud/atlas
-2. **Create database user**:
-   - Username and password
-   - Role: readWrite @ interview-prep
-3. **Create database**:
-   - Database name: interview-prep
-4. **Configure network access**:
-   - Add your server IP or 0.0.0.0/0 (with proper security)
-5. **Get connection string**:
-   - mongodb+srv://user:pass@cluster.mongodb.net/interview-prep
-
-### Self-Hosted MongoDB
-
-1. **Install MongoDB** (Ubuntu):
-```bash
-curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
-echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] http://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-sudo apt-get update
-sudo apt-get install -y mongodb-org
-```
-
-2. **Configure**:
-```bash
-sudo nano /etc/mongod.conf
-```
-
-```yaml
-storage:
-  dbPath: /var/lib/mongodb
-net:
-  port: 27017
-  bindIp: 127.0.0.1
-security:
-  authorization: enabled
-```
-
-3. **Create admin user**:
-```bash
-mongosh
-use admin
-db.createUser({
-  user: 'admin',
-  pwd: 'secure-password',
-  roles: [{ role: 'root', db: 'admin' }]
-})
-```
-
-4. **Create application database**:
-```bash
-mongosh -u admin -p secure-password --authenticationDatabase admin
-use interview-prep
-db.createUser({
-  user: 'appuser',
-  pwd: 'app-password',
-  roles: [{ role: 'readWrite', db: 'interview-prep' }]
-})
-```
-
-## SSL/TLS Setup
-
-### Let's Encrypt (Recommended)
-
-1. **Install Certbot**:
-```bash
-sudo apt-get install certbot python3-certbot-nginx
-```
-
-2. **Get certificate**:
-```bash
-sudo certbot --nginx -d yourdomain.com -d api.yourdomain.com
-```
-
-3. **Auto-renewal** (usually configured automatically)
-
-### Nginx Configuration
-
-Create `/etc/nginx/sites-available/interview-prep`:
-
-```nginx
-# Frontend
-server {
-    listen 80;
-    server_name app.yourdomain.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name app.yourdomain.com;
-
-    ssl_certificate /etc/letsencrypt/live/app.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/app.yourdomain.com/privkey.pem;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-# Backend API
-server {
-    listen 80;
-    server_name api.yourdomain.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name api.yourdomain.com;
-
-    ssl_certificate /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.yourdomain.com/privkey.pem;
-
-    location / {
-        proxy_pass http://localhost:3001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-## Monitoring
-
-### Health Checks
-
-Backend exposes `/health` endpoint. Configure monitoring:
-
-```bash
-# Uptime monitoring
-curl -f http://localhost:3001/health
-
-# PM2 monitoring
-pm2 monit
-pm2 logs interview-prep-api
-```
-
-### Logging
-
-Logs are written to console in JSON format. For production:
-
-1. **Configure log aggregation** (CloudWatch, Datadog, etc.)
-2. **Set LOG_LEVEL=info** in production
-3. **Configure log rotation**
-
-## Backup Strategy
-
-### MongoDB Backup
-
-1. **Automated backups** (MongoDB Atlas handles this)
-2. **Manual backup**:
-```bash
-mongodump --uri="mongodb+srv://user:pass@cluster/db" --out=/backup/mongodb/$(date +%Y%m%d)
-```
-
-### File Storage
-- Uploaded resumes stored on disk
-- Backup the uploads directory
-- Or use S3-compatible storage
-
-## Scaling
-
-### Horizontal Scaling
-
-1. **Load Balancer**: Put Nginx or cloud LB in front
-2. **Multiple backends**: Scale backend instances
-3. **Redis**: Use for session sharing across instances
-4. **Database**: MongoDB replica sets for HA
-
-### Vertical Scaling
-- Increase server resources (CPU, RAM)
-- Good for early-stage growth
-
-## CI/CD
-
-### GitHub Actions Example
-
-`.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Deploy
-        run: |
-          # Push to server and restart
-          rsync -avz --exclude node_modules . user@server:/opt/interview-prep
-          ssh user@server "cd /opt/interview-prep && npm ci --production && pm2 restart interview-prep-api"
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Application won't start**:
-   - Check logs: `pm2 logs` or `docker-compose logs`
-   - Verify environment variables
-   - Check MongoDB connection
-
-2. **Database connection failed**:
-   - Verify MongoDB URI
-   - Check network access (IP whitelist)
-   - Verify credentials
-
-3. **Frontend can't reach API**:
-   - Check CORS configuration
-   - Verify API_URL in frontend
-   - Check that backend is running
-
-4. **File upload fails**:
-   - Check upload directory permissions
-   - Verify file size limits
-   - Check file type validation
-
-## Post-Deployment Checklist
-
-- [ ] Database seeded with topics, questions, coding problems
-- [ ] SSL certificates configured
-- [ ] Environment variables set correctly
-- [ ] Rate limiting configured
-- [ ] Email service working
-- [ ] Health checks passing
-- [ ] Monitoring configured
-- [ ] Backups configured
-- [ ] Log aggregation working
-- [ ] Load testing completed (if needed)
+Fill Google credentials. Fill AI key/model if you want fresh generated questions; leave BOTH empty for no-AI development. AI_BASE_URL is only for a custom compatible provider. MongoDB also stores resume files. Never commit this private file.
+
+Run npm run setup, then npm run dev from the project root. Open localhost:3000; keep localhost consistently, not a mix of localhost and 127.0.0.1. Health: localhost:3001/api/health.
+
+## Google setup
+
+Create a Google OAuth Web application. Add these exact authorized redirect URIs:
+
+- Local: http://localhost:3000/api/auth/google/callback
+- Production: https://YOUR-VERCEL-DOMAIN/api/auth/google/callback
+
+Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on Render. Set FRONTEND_URL to your canonical Vercel HTTPS origin. The callback is derived automatically; there is no GOOGLE_CALLBACK_URL variable. Use the frontend Google button, not a direct Render-host login URL.
+
+If the Google consent screen is in testing mode, add the permitted Google test users. Existing password-only accounts are NOT silently merged by email. Link Google from an existing authenticated account using /api/auth/google/link before cutover; otherwise arrange an owner-verified migration. Their data is preserved.
+
+## Vercel settings
+
+- Root directory: interview-prep/frontend (adjust if your Git repository starts at interview-prep).
+- Framework: Next.js; Node.js 22.
+- Environment: BACKEND_API_URL=https://YOUR-API.onrender.com
+- Build: npm run build.
+
+No NEXT_PUBLIC_API_URL and no Google/AI/database secrets belong in the browser. The frontend uses same-origin /api, proxied to Render. Rebuild when BACKEND_API_URL changes. Use a stable authorized production domain rather than unconfigured preview URLs.
+
+## Render settings
+
+- Root directory: interview-prep/backend (adjust to your repository root).
+- Runtime: Node.js 22; NODE_ENV=production.
+- Build: npm ci --include=dev && npm run build.
+- Start: npm start.
+- Health check: /api/health.
+- Render supplies PORT; production listens on 0.0.0.0.
+
+Enter MONGODB_URI (Atlas/hosted MongoDB), FRONTEND_URL (Vercel origin), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and optional AI_PROVIDER/AI_API_KEY/AI_MODEL. Choose a model that supports JSON-object chat responses; schema validation also runs locally. Do not use the old fake development key.
+
+AI_PROVIDER endpoints:
+- openrouter: https://openrouter.ai/api/v1
+- gemini: https://generativelanguage.googleapis.com/v1beta/openai/
+- openai: https://api.openai.com/v1
+- custom: set AI_BASE_URL to an HTTPS OpenAI-compatible endpoint.
+
+The model ID must match the selected provider's catalog. This does not imply support for every model or native provider-specific API feature. Do not assume an SDK named OpenAI means requests go to OpenAI: the configured endpoint chooses the provider.
+
+## Resume storage on Render
+
+Resumes are stored in MongoDB GridFS (`resumeFiles.files` and `resumeFiles.chunks`) using the existing MONGODB_URI. No AWS account, bucket or separate storage credentials are required. Downloads remain authenticated and owner-only; file references are not public URLs. Include both collections in database backups and monitor MongoDB storage allowance.
+
+New uploads never use Render's local disk. Historical local files remain readable on the original host. Back up the database and uploads, stop uploads during migration, then run `npm run migrate:resume-storage` inside backend on that original host. The command verifies byte length/checksum before updating metadata, leaves originals intact, and can be rerun. Do not move hosts until migration succeeds. Historical cloud files require export/re-upload; the cloud adapter has been removed.
+
+## What was removed
+
+JWT/BCRYPT/password/email settings, Redis, vector-search switches, Swagger credentials, feature flags, logging switches and dozens of provider-specific tuning variables. Logging remains internal for diagnosis. Upload validation, rate limits, AI timeout/retry and request-budget safety defaults remain in code.
+
+Google sign-in still needs a login session. One random cookie token is hashed in MongoDB; HttpOnly, Secure in production, SameSite=Lax and seven-day expiry are fixed. No JWT secret or refresh-token configuration. A temporary state cookie is used only during OAuth.
+
+Optional advanced settings not needed for basic setup: AI_EMBEDDING_MODEL for approximate semantic duplicate detection and SERPAPI_KEY for paid search. Embeddings/search add provider costs; exact question exclusion works without embeddings.
+
+## Release checks
+
+Back up MongoDB/files before migration. Run npm run migrate inside backend to backfill historical ownership/exposures and hash old sessions. This change has not run migration against your real database.
+
+Run builds, lint and backend tests. On actual staging, verify Google login/callback, cookie persistence/reload, logout, two-user isolation, upload/review, questions/answers/history/revisions, fresh-day repeat exclusion and private storage after restart. External providers are mocked in automated tests; live hosting/cookies/credentials still need verification.
+
+Official references: [Vercel rewrites](https://vercel.com/docs/routing/rewrites), [Render environment settings](https://render.com/docs/configure-environment-variables), [Render filesystem](https://render.com/docs/disks), [OpenRouter](https://openrouter.ai/docs/quickstart), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai).

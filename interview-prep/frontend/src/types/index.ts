@@ -25,28 +25,6 @@ export interface UserPreferences {
   notifyBrowser: boolean;
 }
 
-// Auth types
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  name: string;
-}
-
-export interface AuthResponse {
-  user: {
-    id: string;
-    email: string;
-    name: string;
-  };
-  accessToken?: string;
-  refreshToken?: string;
-}
-
 // Resume types
 export interface Resume {
   id: string;

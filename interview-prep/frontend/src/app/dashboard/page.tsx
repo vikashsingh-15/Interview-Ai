@@ -9,22 +9,26 @@ import api from '@/lib/api';
 import { Session, Analytics } from '@/types';
 import { formatDate, formatTime, calculateProgress, cn, truncate } from '@/lib/utils';
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 
 export default function DashboardPage() {
-  const { isAuthenticated, user } = useAuth();
+  const router = useRouter();
+  const { isAuthenticated, user, isLoading: authLoading } = useAuth();
   const [session, setSession] = useState<Session | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (authLoading) return;
     if (!isAuthenticated) {
-      redirect('/login');
+      router.replace('/login');
       return;
     }
 
     const fetchData = async () => {
       try {
+        const profileRes = await api.get('/profile/onboarding');
+        if (!profileRes.data.data.profile?.onboardingCompleted) { router.replace('/onboarding'); return; }
         const [sessionRes, analyticsRes] = await Promise.all([
           api.get('/sessions/today'),
           api.get('/analytics/overview'),
@@ -39,7 +43,7 @@ export default function DashboardPage() {
     };
 
     fetchData();
-  }, [isAuthenticated, user]);
+  }, [isAuthenticated, user, authLoading, router]);
 
   if (isLoading) {
     return (
@@ -81,6 +85,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+        <p className="mb-6"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link></p>
         {/* Stats Grid */}
         <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
           <Card>

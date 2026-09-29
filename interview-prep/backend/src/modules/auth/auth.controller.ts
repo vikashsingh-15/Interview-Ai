@@ -1,224 +1,60 @@
 import { Router } from 'express';
-import { AuthenticatedRequest } from '../../common/middleware/auth';
+import { z } from 'zod';
+import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import config from '../../config';
-import { validate, registerValidation, loginValidation, verifyEmailValidation, resetPasswordValidation } from '../../common/middleware/validate';
+import { asyncHandler, ForbiddenError } from '../../common/filters/error-filter';
+import { googleAuth } from './google.service';
 import { authService } from './auth.service';
-import { asyncHandler } from '../../common/filters/error-filter';
-
-const router = Router();
-
-// Register
-router.post(
-  '/register',
-  validate(...registerValidation),
-  asyncHandler(async (req, res) => {
-    const { email, password, name } = req.body;
-
-    const result = await authService.register(email, password, name);
-
-    res.status(201).json({
-      success: true,
-      data: result,
-      message: result.requiresVerification
-        ? 'Registration successful. Please check your email to verify your account.'
-        : 'Registration successful. Welcome!',
-    });
-  })
-);
-
-// Login
-router.post(
-  '/login',
-  validate(...loginValidation),
-  asyncHandler(async (req, res) => {
-    const { email, password } = req.body;
-
-    const result = await authService.login(email, password, req);
-
-    res.cookie('interview_prep_session', result.accessToken, {
-      httpOnly: true,
-      secure: config.auth.cookieSecure,
-      sameSite: config.auth.cookieSameSite,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
-    res.json({
-      success: true,
-      data: {
-        user: result.user,
-      },
-    });
-  })
-);
-
-// Logout
-router.post(
-  '/logout',
-  asyncHandler(async (req, res) => {
-    const token = req.cookies?.interview_prep_session || '';
-
-    await authService.logout(token);
-
-    res.clearCookie('interview_prep_session');
-
-    res.json({
-      success: true,
-      message: 'Logged out successfully',
-    });
-  })
-);
-
-// Refresh token
-router.post(
-  '/refresh',
-  asyncHandler(async (req, res) => {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      throw new Error('Refresh token is required');
-    }
-
-    const result = await authService.refresh(refreshToken);
-
-    res.cookie('interview_prep_session', result.accessToken, {
-      httpOnly: true,
-      secure: config.auth.cookieSecure,
-      sameSite: config.auth.cookieSameSite,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    res.json({
-      success: true,
-      data: {
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-      },
-    });
-  })
-);
-
-// Verify email
-router.post(
-  '/verify-email',
-  validate(...verifyEmailValidation),
-  asyncHandler(async (req, res) => {
-    const { token } = req.body;
-
-    const result = await authService.verifyEmail(token);
-
-    res.json({
-      success: true,
-      message: result.message,
-    });
-  })
-);
-
-// Request password reset
-router.post(
-  '/forgot-password',
-  asyncHandler(async (req, res) => {
-    const { email } = req.body;
-
-    await authService.requestPasswordReset(email);
-
-    res.json({
-      success: true,
-      message: 'If the email exists, a password reset link has been sent.',
-    });
-  })
-);
-
-// Reset password
-router.post(
-  '/reset-password',
-  validate(...resetPasswordValidation),
-  asyncHandler(async (req, res) => {
-    const { token, password } = req.body;
-
-    await authService.resetPassword(token, password);
-
-    res.json({
-      success: true,
-      message: 'Password reset successfully. Please log in with your new password.',
-    });
-  })
-);
-
-// Get profile
-router.get(
-  '/me',
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!req.user) {
-      throw new Error('Not authenticated');
-    }
-
-    const profile = await authService.getProfile(req.user.id);
-
-    res.json({
-      success: true,
-      data: profile,
-    });
-  })
-);
-
-// Update profile
-router.put(
-  '/me',
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!req.user) {
-      throw new Error('Not authenticated');
-    }
-
-    const { name, preferences } = req.body;
-
-    const result = await authService.updateProfile(req.user.id, { name, preferences });
-
-    res.json({
-      success: true,
-      data: result,
-    });
-  })
-);
-
-// Change password
-router.post(
-  '/change-password',
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!req.user) {
-      throw new Error('Not authenticated');
-    }
-
-    const { currentPassword, newPassword } = req.body;
-
-    const result = await authService.changePassword(req.user.id, currentPassword, newPassword);
-
-    res.json({
-      success: true,
-      message: result.message,
-    });
-  })
-);
-
-// Delete account
-router.delete(
-  '/me',
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!req.user) {
-      throw new Error('Not authenticated');
-    }
-
-    const { password } = req.body;
-
-    const result = await authService.deleteAccount(req.user.id, password);
-
-    // Clear cookie
-    res.clearCookie('interview_prep_session');
-
-    res.json({
-      success: true,
-      message: result.message,
-    });
-  })
-);
-
+import { authRateLimiter } from '../../common/middleware/rate-limit';
+const router=Router();
+const cookieOptions={httpOnly:true,secure:config.auth.cookieSecure,sameSite:config.auth.cookieSameSite,path:'/'} as const;
+router.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
+router.get('/providers',(_req,res)=>res.json({success:true,data:{google:googleAuth.configured()}}));
+router.get('/google',authRateLimiter,asyncHandler(async(_req,res)=>{
+  const flow=await googleAuth.begin();
+  res.cookie('oauth_state',flow.state,{...cookieOptions,maxAge:600000});res.redirect(flow.url);
+}));
+router.get('/google/link',authRateLimiter,authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const flow=await googleAuth.begin(req.user!.id);
+  res.cookie('oauth_state',flow.state,{...cookieOptions,maxAge:600000});res.redirect(flow.url);
+}));
+router.get('/google/callback',authRateLimiter,asyncHandler(async(req,res)=>{
+  try {
+    const {sessionToken}=await googleAuth.callback(String(req.query.code || ''),String(req.query.state || ''),
+      req.cookies?.oauth_state || '',req.headers['user-agent'] || '');
+    res.cookie(config.auth.cookieName,sessionToken,{...cookieOptions,maxAge:config.auth.sessionDurationMs});
+    res.clearCookie('oauth_state',cookieOptions);
+    res.clearCookie('interview_prep_refresh',cookieOptions);
+    res.redirect(config.urls.frontend+'/dashboard');
+  } catch {
+    res.clearCookie('oauth_state',cookieOptions);
+    res.redirect(config.urls.frontend+'/login?error=google_login_failed');
+  }
+}));
+router.post('/logout',asyncHandler(async(req,res)=>{
+  await authService.logout(req.cookies?.[config.auth.cookieName] || '');
+  res.clearCookie(config.auth.cookieName,cookieOptions);res.clearCookie('oauth_state',cookieOptions);
+  res.json({success:true,message:'Signed out'});
+}));
+router.get('/me',authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  res.json({success:true,data:await authService.getProfile(req.user!.id)});
+}));
+const preferences=z.object({
+  dailyQuestions:z.number().int().min(0).max(50).optional(),codingCount:z.number().int().min(0).max(10).optional(),
+  systemDesignCount:z.number().int().min(0).max(10).optional(),projectQuestions:z.number().int().min(0).max(20).optional(),
+  studyDays:z.number().int().min(1).max(365).optional(),focusTopics:z.array(z.string().max(100)).max(30).optional(),
+  excludedTopics:z.array(z.string().max(100)).max(30).optional(),revisionFrequency:z.enum(['daily','weekly','biweekly']).optional(),
+  mockInterviewDuration:z.number().int().min(10).max(180).optional(),notifyBrowser:z.boolean().optional(),
+});
+router.put('/me',authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const data=z.object({name:z.string().trim().min(2).max(100).optional(),preferences:preferences.optional()}).parse(req.body);
+  res.json({success:true,data:await authService.updateProfile(req.user!.id,data)});
+}));
+router.delete('/me',authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  z.object({confirmation:z.literal('DELETE')}).parse(req.body);
+  if(!req.authSession || Date.now()-new Date(req.authSession.createdAt).getTime()>10*60000)
+    throw new ForbiddenError('Sign in with Google again before deleting your account');
+  const result=await authService.deleteAccount(req.user!.id);
+  res.clearCookie(config.auth.cookieName,cookieOptions);res.json(result);
+}));
 export default router;

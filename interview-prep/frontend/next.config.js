@@ -1,39 +1,16 @@
+const fs=require('node:fs');
+const path=require('node:path');
+const envFile=path.resolve(__dirname,'../.env');
+if(fs.existsSync(envFile))process.loadEnvFile(envFile);
+const backend=(process.env.BACKEND_API_URL || 'http://localhost:3001').replace(/\/$/,'');
+const target=new URL(backend);
+if(!['http:','https:'].includes(target.protocol) || target.username || target.password || target.pathname!=='/')
+  throw new Error('BACKEND_API_URL must be a plain backend origin without credentials or a path');
+if(process.env.VERCEL && target.protocol!=='https:')
+  throw new Error('Set BACKEND_API_URL to your HTTPS Render origin in Vercel');
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  reactStrictMode: true,
-  images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'images.unsplash.com',
-      },
-    ],
-  },
-  async headers() {
-    return [
-      {
-        source: '/api/:path*',
-        headers: [
-          {
-            key: 'Access-Control-Allow-Origin',
-            value: process.env.FRONTEND_URL || 'http://localhost:3000',
-          },
-          {
-            key: 'Access-Control-Allow-Credentials',
-            value: 'true',
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET, POST, PUT, DELETE, OPTIONS',
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Content-Type, Authorization, X-Requested-With',
-          },
-        ],
-      },
-    ];
-  },
+module.exports={
+  reactStrictMode:true,
+  images:{remotePatterns:[{protocol:'https',hostname:'images.unsplash.com'}]},
+  async rewrites(){return [{source:'/api/:path*',destination:backend+'/api/:path*'}];},
 };
-
-module.exports = nextConfig;
