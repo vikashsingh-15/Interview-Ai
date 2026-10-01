@@ -75,7 +75,7 @@ export function HowItWorksSection() {
         </div>
 
         <div className="mt-12 text-center">
-          <Link href="/register">
+          <Link href="/login">
             <button className="inline-flex items-center px-6 py-3 text-base font-medium rounded-lg bg-brand-secondary text-white hover:bg-brand-secondary/90 transition-colors">
               Start Your Journey
               <svg className="ml-2 w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

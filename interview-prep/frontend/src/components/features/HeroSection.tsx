@@ -35,7 +35,7 @@ export function HeroSection() {
 
           {/* CTA Buttons */}
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in stagger-2">
-            <Link href="/register">
+            <Link href="/login">
               <Button size="lg" className="px-8">
                 Start Free Preparation
               </Button>

@@ -2,7 +2,7 @@ import mongoose, { Schema } from 'mongoose';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 import OpenAI from 'openai';
-import { createAIClient } from '../../common/services/ai-provider';
+import { aiProviderCandidates, hasFallbackAI } from '../../common/services/ai-provider';
 import config from '../../config';
 import logger from '../../config/logger';
 import InterviewProfile from '../profile/interview-profile.model';
@@ -10,12 +10,17 @@ import ResumeProfile from '../resume/resume-profile.model';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { QuestionHistory } from './question-history.model';
 import { Question } from './question.model';
-import { structuredAI } from '../../common/services/structured-ai';
+import { structuredAIMeta } from '../../common/services/structured-ai';
 import { BadRequestError, AIProviderError, RateLimitError } from '../../common/filters/error-filter';
 
 export const normalizeQuestion = (text: string) => text.normalize('NFKC').toLowerCase()
   .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
 export const questionHash = (text: string) => createHash('sha256').update(normalizeQuestion(text)).digest('hex');
+export function matchesQuestionTopic(topic: string, text: string): boolean {
+  // This is the onboarding fallback category, not a phrase an answer must contain.
+  if (normalizeQuestion(topic) === 'professional experience') return true;
+  return (` ${normalizeQuestion(text)} `).includes(` ${normalizeQuestion(topic)} `);
+}
 export function nearDuplicate(a: string, b: string): boolean {
   if (questionHash(a) === questionHash(b)) return true;
   const words = (s: string) => new Set(normalizeQuestion(s).split(' ').filter(w => w.length > 2));
@@ -49,7 +54,7 @@ const questionSchema = z.object({
   difficulty: z.enum(['EASY','MEDIUM','HARD','EXPERT']),
   archetype: z.enum(['FOUNDATIONAL','CONCEPTUAL','INTERNAL_WORKING','IMPLEMENTATION','CODE_REASONING',
     'DEBUGGING','PRODUCTION_SCENARIO','CONCURRENCY','SECURITY','FAILURE_SCENARIO','TRADE_OFF','DESIGN','SCALABILITY','DEEP_DIVE']),
-  detailedAnswer: z.string().min(100).max(6000),
+  detailedAnswer: z.string().min(350).max(6000),
   estimatedAnswerTimeSeconds: z.number().int().min(30).max(1800),
   factIds: z.array(z.number().int().min(0)).max(10).default([]),
   framing: z.enum(['hypothetical','general_knowledge','confirmed_experience']),
@@ -97,9 +102,20 @@ export async function buildQuestionPlan(userId: string, topic: string, count: nu
 export async function questionEmbedding(text: string): Promise<number[] | undefined> {
   const model = config.ai.embeddingModel;
   if (!model || !config.ai.apiKey) return undefined;
-  const client = createAIClient();
-  const result = await client.embeddings.create({ model, input: text });
-  return result.data[0]?.embedding;
+  // Embeddings are best-effort: when the primary provider cannot serve, the
+  // configured embedding model is tried on the fallback provider so dedup
+  // quality survives a primary outage. Lexical checks always remain.
+  try {
+    for (const candidate of aiProviderCandidates()) {
+      try {
+        const client = new OpenAI({ apiKey:candidate.apiKey, baseURL:candidate.baseURL,
+          timeout:config.ai.timeout, maxRetries:config.ai.retryCount });
+        const result = await client.embeddings.create({ model, input: text });
+        return result.data[0]?.embedding;
+      } catch { /* try the next provider */ }
+    }
+  } catch { /* invalid provider configuration; skip semantic checks */ }
+  return undefined;
 }
 
 export async function generatePersonalizedQuestions(userId: string, topic: string, count: number, type = 'technical',
@@ -123,7 +139,7 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
   const accepted:any[] = available.slice(0,count);
   try {
     if (accepted.length < count && config.ai.apiKey) {
-      const result = await structuredAI({ userId, purpose:'personalized-questions', version:'question-v3',
+      const meta = await structuredAIMeta({ userId, purpose:'personalized-questions', version:'question-v3',
         schema:generatedBatchSchema, context:{ ...context, count:count-accepted.length,
           existingBankQuestions:bank.map(q=>q.question).slice(0,40) },
         system: `You are a role-agnostic personalized interviewer. The backend plan determines the topic and category.
@@ -134,14 +150,17 @@ Respect difficulty, target level, interview category and excluded topics; no def
 No company provenance claims. No fabricated URLs. For project questions use a confirmed project and its actual claims.
 Return {"questions":[{"question":"specific, answerable prompt","subtopic":"...","concepts":["..."],
 "difficulty":"EASY|MEDIUM|HARD|EXPERT","archetype":"CONCEPTUAL|INTERNAL_WORKING|DEBUGGING|PRODUCTION_SCENARIO|TRADE_OFF|DESIGN|DEEP_DIVE",
-"detailedAnswer":"private reference rubric with useful reasoning and tradeoffs","estimatedAnswerTimeSeconds":180,
+"detailedAnswer":"an interview-ready answer of at least 350 characters: direct response, technical mechanism, concrete example, trade-offs, and when alternatives are appropriate","estimatedAnswerTimeSeconds":180,
 "factIds":[0],"framing":"hypothetical|general_knowledge|confirmed_experience"}]}.
 Do not generate executable coding problems here; coding uses a validated curated bank.`,
       });
+      // Record the provider/model that actually served, including fallbacks.
+      const servedModel = meta.model;
+      const result = meta.result;
       for (const q of result.questions) {
         if (accepted.length >= count) break;
         const relevantText = normalizeQuestion(q.question+' '+q.detailedAnswer+' '+q.concepts.join(' '));
-        if (type !== 'project' && !relevantText.includes(normalizeQuestion(topic)) && !q.factIds.some(id=>normalizeQuestion(JSON.stringify(context.confirmedFacts[id] || {})).includes(normalizeQuestion(topic)))) continue;
+        if (type !== 'project' && !matchesQuestionTopic(topic, relevantText) && !q.factIds.some(id=>matchesQuestionTopic(topic, JSON.stringify(context.confirmedFacts[id] || {})))) continue;
         if (q.factIds.some(id=>id>=context.confirmedFacts.length) ||
             q.framing === 'confirmed_experience' && !q.factIds.length) continue;
         if (type === 'project' && !q.factIds.some(id=>(context.confirmedFacts[id] as any)?.kind === 'project')) continue;
@@ -163,7 +182,7 @@ Do not generate executable coding problems here; coding uses a validated curated
             isProjectInterview:type === 'project', isSystemDesign:type === 'system_design',
             provenance:q.framing === 'confirmed_experience' ? 'RESUME_DERIVED' : 'AI_GENERATED',
             qualityStatus:'approved', qualityScore:0.6, promptVersion:'question-v3',
-            generatorModel:config.ai.model, generatedAt:new Date(),
+            generatorModel:servedModel, generatedAt:new Date(),
             resumeClaimIds:q.factIds.map(String), sourceId:String(plan._id), tags:['personalized',q.framing],
             expectedAnswerDepth:'DEEP', interviewPriority:'HIGH', resumeRelevance:q.factIds.length ? 'HIGH' : 'LOW',
           });
@@ -175,6 +194,13 @@ Do not generate executable coding problems here; coding uses a validated curated
         if (saved) accepted.push(saved);
       }
     }
+    if (!accepted.length && config.ai.apiKey) {
+      logger.warn('AI questions rejected by validation', { provider:config.ai.provider, model:config.ai.model,
+        fallbackProvider:hasFallbackAI() ? config.ai.fallback.provider : undefined,
+        fallbackModel:hasFallbackAI() ? config.ai.fallback.model : undefined,
+        topic, planId:String(plan._id) });
+      throw new Error('No generated questions passed relevance, grounding, difficulty and duplicate checks');
+    }
     await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:accepted.length ? 'completed' : 'exhausted' });
   } catch(error) {
     await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:'failed' });
@@ -182,6 +208,8 @@ Do not generate executable coding problems here; coding uses a validated curated
     logger.error('Personalized question generation failed', {
       provider: config.ai.provider,
       model: config.ai.model,
+      fallbackConfigured: hasFallbackAI(),
+      fallbackProvider: hasFallbackAI() ? config.ai.fallback.provider : undefined,
       purpose: 'personalized-questions',
       error: providerError?.message || 'Unknown AI provider error',
       status: providerError?.status,

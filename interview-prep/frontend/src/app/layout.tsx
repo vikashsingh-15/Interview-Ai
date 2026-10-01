@@ -3,7 +3,6 @@ import "./globals.css";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { Header } from "@/components/layout/Header";
-import { Footer } from "@/components/layout/Footer";
 
 
 export const metadata: Metadata = {
@@ -32,7 +31,6 @@ export default function RootLayout({
             <main className="flex-1">
               {children}
             </main>
-            <Footer />
           </ToastProvider>
         </AuthProvider>
       </body>

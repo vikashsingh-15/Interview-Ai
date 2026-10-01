@@ -1,4 +1,8 @@
 import { randomUUID } from 'crypto';
+import { z } from 'zod';
+import { structuredAI } from '../../common/services/structured-ai';
+import { hasAI } from '../../common/services/ai-provider';
+
 import { generatePersonalizedQuestions, reserveQuestion } from '../questions/personalized-generator';
 import mongoose from 'mongoose';
 import config from '../../config';
@@ -19,6 +23,16 @@ import {
   getOpenAIClient,
   EvaluationResult,
 } from '../evaluation/answer-evaluation';
+
+const interviewAnswerSchema = z.object({
+  direct:z.string().min(20).max(500),
+  questionFocus:z.string().min(15).max(350),
+  why:z.string().min(25).max(750),
+  how:z.string().min(35).max(1000),
+  example:z.string().min(35).max(850),
+  tradeOff:z.string().min(25).max(750),
+  summary:z.string().min(20).max(350),
+});
 
 // Session generation service
 export const sessionService = {
@@ -353,6 +367,75 @@ export const sessionService = {
       .lean();
 
     return session || null;
+  },
+
+  async getInterviewAnswer(sessionId: string, mappingId: string, userId: string): Promise<{
+    sections?: z.infer<typeof interviewAnswerSchema>; legacyAnswer?: string;
+  }> {
+    const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
+    if (!session) throw new NotFoundError('Session not found');
+    const mapped = await SessionQuestion.findOne({ _id:mappingId, sessionId });
+    if (!mapped) throw new NotFoundError('Question not found in session');
+    const question = await Question.findById(mapped.questionId);
+    if (!question) throw new NotFoundError('Question not found');
+    if (mapped.status === 'pending') {
+      await SessionQuestion.updateOne({ _id:mapped._id, status:'pending' }, { $set:{ status:'presented' } });
+    }
+    const cached = interviewAnswerSchema.safeParse(question.interviewAnswerSections);
+    if (cached.success) return { sections:cached.data };
+    const reference = question.interviewAnswer || question.detailedAnswer || question.shortAnswer || question.codingProblem?.solutionCode || '';
+    if (!hasAI()) {
+      if (reference) return { legacyAnswer:reference };
+      throw new NotFoundError('An answer is not available for this question yet');
+    }
+    try {
+      const result = await structuredAI({ userId, purpose:'interview-answer', version:'answer-v2',
+        schema:interviewAnswerSchema,
+        context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
+          difficulty:question.difficulty, type:question.questionType },
+        system:`Write a technically accurate, standard interview answer to the exact question.
+The direct field MUST answer the question in its first sentence. questionFocus defines the key terms and what the interviewer is asking.
+why gives the rationale. how explains concrete steps or mechanism. example gives one specific hypothetical scenario.
+tradeOff names a real limitation and when an alternative fits. summary closes in one sentence.
+Keep the spoken answer (direct, why, how, example, tradeOff, summary) about 140-200 words total, suitable for 60-90 seconds.
+Use a real number only if the reference supplies one; do not fabricate metrics or personal experience.
+Correct technical mistakes in the reference. Do not claim that the candidate implemented a system unless verified.
+For coding questions cover the algorithm, complexity and an edge case across the fields.
+Return a JSON object with string fields direct, questionFocus, why, how, example, tradeOff, summary.`,
+      });
+      await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerSections:result } });
+      return { sections:result };
+    } catch (error) {
+      logger.warn('Interview answer enhancement failed', { questionId:String(question._id), error:(error as Error).message });
+      if (reference) return { legacyAnswer:reference };
+      throw error;
+    }
+  },
+
+  async markQuestionReviewed(sessionId: string, mappingId: string, userId: string): Promise<number> {
+    const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
+    if (!session) throw new NotFoundError('Session not found');
+    const mapped = await SessionQuestion.findOneAndUpdate({ _id:mappingId, sessionId,
+      status:'presented' }, { $set:{ status:'reviewed' } }, { new:true });
+    if (!mapped && !await SessionQuestion.exists({ _id:mappingId, sessionId })) {
+      throw new NotFoundError('Question not found in session');
+    }
+    if (!mapped && !await SessionQuestion.exists({ _id:mappingId, sessionId, status:{$in:['reviewed','answered']} })) {
+      throw new ConflictError('Reveal the answer before marking this question reviewed');
+    }
+    const all = await SessionQuestion.find({ sessionId }).select('_id sectionId status').lean();
+    const reviewed = all.filter(q=>['answered','reviewed'].includes(q.status));
+    for (const section of session.sections) {
+      const entries = all.filter(q=>String(q.sectionId)===String(section._id));
+      section.completedQuestions = entries.filter(q=>['answered','reviewed'].includes(q.status)).length;
+      section.status = section.totalQuestions > 0 && section.completedQuestions >= section.totalQuestions ? 'completed':'pending';
+    }
+    session.completedQuestions = reviewed.length;
+    const scored = await SessionQuestion.find({ sessionId, status:'answered' }).select('finalScore').lean();
+    session.correctQuestions = scored.filter(q=>(q.finalScore || 0)>=0.7).length;
+    session.averageScore = scored.length ? scored.reduce((sum,q)=>sum+(q.finalScore || 0),0)/scored.length : 0;
+    await session.save();
+    return reviewed.length;
   },
 
   // Submit answer
@@ -721,10 +804,11 @@ export const sessionService = {
 
     // Update user progress
     const UserProgress = mongoose.model('UserProgress');
+    const writtenAnswers = await SessionQuestion.countDocuments({ sessionId:session._id, status:'answered' });
     await (UserProgress as any).upsertForUser(new mongoose.Types.ObjectId(userId)).then(
       (up) => {
         up.totalQuestions += session.totalQuestions;
-        up.answeredQuestions += session.completedQuestions;
+        up.answeredQuestions += writtenAnswers;
         up.totalStudyTimeSeconds += session.totalTimeSeconds || 0;
         up.daysActive += 1;
         up.lastActiveDate = new Date();

@@ -37,7 +37,7 @@ export interface ISessionQuestion {
   questionId: mongoose.Types.ObjectId;
   sectionId: mongoose.Types.ObjectId;
   order: number;
-  status: 'pending' | 'presented' | 'answered' | 'skipped' | 'bookmarked' | 'flagged';
+  status: 'pending' | 'presented' | 'answered' | 'reviewed' | 'skipped' | 'bookmarked' | 'flagged';
   isRevision: boolean;
   revisionNumber?: number;
   questionSnapshot: {
@@ -181,7 +181,7 @@ const sessionQuestionSchema = new Schema<ISessionQuestion>({
 
   status: {
     type: String,
-    enum: ['pending', 'presented', 'answered', 'skipped', 'bookmarked', 'flagged'],
+    enum: ['pending', 'presented', 'answered', 'reviewed', 'skipped', 'bookmarked', 'flagged'],
     default: 'pending',
   },
   isRevision: { type: Boolean, default: false },
@@ -381,13 +381,14 @@ dailySessionSchema.methods.recordQuestionAnswer = async function(
   // Sections store mapping IDs, not embedded questions. Recompute, don't increment on retries.
   const mapped = await mongoose.model('SessionQuestion').find({ sessionId:this._id }).lean();
   const answered = mapped.filter(q=>q.status === 'answered');
+  const completed = mapped.filter(q=>q.status === 'answered' || q.status === 'reviewed');
   for (const section of this.sections) {
     const entries = mapped.filter(q=>String(q.sectionId) === String(section._id) ||
       section.questions.some((id:any)=>String(id) === String(q._id)));
-    section.completedQuestions = entries.filter(q=>q.status === 'answered').length;
+    section.completedQuestions = entries.filter(q=>q.status === 'answered' || q.status === 'reviewed').length;
     section.status = section.completedQuestions >= section.totalQuestions && section.totalQuestions > 0 ? 'completed' : 'pending';
   }
-  this.completedQuestions = answered.length;
+  this.completedQuestions = completed.length;
   this.correctQuestions = answered.filter(q=>(q.finalScore || 0) >= 0.7).length;
   this.averageScore = answered.length ? answered.reduce((sum,q)=>sum+(q.finalScore || 0),0)/answered.length : 0;
   await this.save();

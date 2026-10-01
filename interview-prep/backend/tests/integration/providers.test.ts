@@ -8,7 +8,9 @@ import { googleAuth } from '../../src/modules/auth/google.service';
 import { createSession, hashToken } from '../../src/common/middleware/auth';
 import { Session } from '../../src/modules/auth/index.model';
 import { generatePersonalizedQuestions, reserveQuestion, QuestionExposure } from '../../src/modules/questions/personalized-generator';
-import { AIRequest, AIUsage, structuredAI } from '../../src/common/services/structured-ai';
+import { AIRequest, AIUsage, structuredAI, structuredAIMeta } from '../../src/common/services/structured-ai';
+import { setActiveProvider, aiProviderCandidates, getActiveProvider } from '../../src/common/services/ai-provider';
+import { generatedBatchSchema } from '../../src/modules/questions/personalized-generator';
 import { z } from 'zod';
 import request from 'supertest';
 import { app } from '../../src/index';
@@ -29,7 +31,7 @@ let db:MongoMemoryServer,userId:string;
 const candidate={
   question:'Imagine a React interface with overlapping network requests. How would you prevent a stale response from replacing newer state?',
   subtopic:'Request lifecycle',concepts:['React','state'],difficulty:'MEDIUM',archetype:'DEBUGGING',
-  detailedAnswer:'Associate each request with a generation identifier. Apply a response only if its generation is current. Abort obsolete work where supported and handle loading and error transitions independently.',
+  detailedAnswer:'Associate each request with a generation identifier that increments on every fetch. Apply a response only if its generation matches the latest request, because older responses must never overwrite newer state. Abort obsolete requests with an abort controller where supported, and keep loading, error and data transitions independent so a failed retry cannot blank a rendered list. In large tables, combine this with cancellation on unmount and a small cache keyed by query parameters to avoid redundant fetches.',
   estimatedAnswerTimeSeconds:180,factIds:[0],framing:'hypothetical',
 };
 beforeAll(async()=>{
@@ -46,7 +48,8 @@ beforeAll(async()=>{
     preferences:{difficulty:'medium'}});
 });
 afterAll(async()=>{await mongoose.disconnect();if(db)await db.stop();});
-beforeEach(()=>{config.ai.apiKey='fixture-key-not-real';mockCreate.mockReset();});
+beforeEach(()=>{config.ai.provider='openrouter';config.ai.apiKey='fixture-key-not-real';mockCreate.mockReset();setActiveProvider(null);
+  config.ai.fallback={provider:'openrouter',apiKey:'',model:'',customBaseURL:''};});
 test('real provider adapter validates and persists personalized questions, without unconfirmed facts',async()=>{
   mockCreate.mockResolvedValue({choices:[{message:{content:JSON.stringify({questions:[candidate]})},finish_reason:'stop'}],usage:{total_tokens:100}});
   const generated=await generatePersonalizedQuestions(userId,'React',1);
@@ -62,7 +65,9 @@ test('real provider adapter validates and persists personalized questions, witho
 });
 test('same generated text is rejected after assignment and never padded with templates',async()=>{
   mockCreate.mockResolvedValue({choices:[{message:{content:JSON.stringify({questions:[candidate]})},finish_reason:'stop'}]});
-  expect(await generatePersonalizedQuestions(userId,'React',1)).toHaveLength(0);
+  // Every fresh candidate is a duplicate of the reserved one, so generation
+  // reports unavailability instead of padding the session with repeats.
+  await expect(generatePersonalizedQuestions(userId,'React',1)).rejects.toThrow('Question generation unavailable');
   expect(await QuestionExposure.countDocuments({userId})).toBe(1);
 });
 test('malformed AI output records failure and is not shown to the user',async()=>{
@@ -80,6 +85,40 @@ test('per-user AI budget is enforced atomically',async()=>{
   expect((await AIUsage.findOne({userId:budgetUser}))!.requests).toBe(1);
   config.ai.dailyRequestLimit=previous;
 });
+test('primary provider failure falls back to the second provider and records it',async()=>{
+  config.ai.fallback={provider:'gemini',apiKey:'fallback-fixture-key',model:'gemini-fallback-model',customBaseURL:''};
+  // First call (primary) fails; second call (fallback) returns valid output.
+  mockCreate.mockRejectedValueOnce(new Error('429 free-models-per-day limit reached'))
+    .mockResolvedValueOnce({choices:[{message:{content:JSON.stringify({questions:[candidate]})},finish_reason:'stop'}],usage:{total_tokens:100}});
+  const meta=await structuredAIMeta({userId,purpose:'personalized-questions',version:'question-v3',
+    system:'Return JSON',context:{},schema:generatedBatchSchema});
+  expect(meta.provider).toBe('gemini');
+  expect(meta.fallbackUsed).toBe(true);
+  const log=await AIRequest.findOne({userId,purpose:'personalized-questions',status:'completed'}).sort({createdAt:-1});
+  expect(log!.provider).toBe('gemini');expect(log!.model).toBe('gemini-fallback-model');
+  // The fallback stays first until the process restarts or the primary succeeds again.
+  expect(aiProviderCandidates().map(c=>c.name)).toEqual(['gemini','openrouter']);
+});
+
+test('question generation uses the fallback provider and tags generatorModel with it',async()=>{
+  config.ai.fallback={provider:'gemini',apiKey:'fallback-fixture-key',model:'gemini-fallback-model',customBaseURL:''};
+  // A security question distinct from the reserved React question so the
+  // duplicate filters pass and the fallback's output is actually used.
+  const securityCandidate={
+    question:'A suspicious privilege escalation alert fires in production at 3am. Walk through your security incident response from triage to postmortem.',
+    subtopic:'Incident response',concepts:['Security','incident response'],difficulty:'MEDIUM',archetype:'PRODUCTION_SCENARIO',
+    detailedAnswer:'Begin by containing the affected host so the potential attacker loses access, then capture volatile evidence such as active sessions and process lists before restarting anything. Review authentication logs to identify how credentials were obtained, rotate every exposed secret, and patch the escalation path. During the postmortem, record the security timeline, the detection gap that allowed the alert to fire late, and the monitoring or least-privilege changes that prevent a repeat incident.',
+    estimatedAnswerTimeSeconds:180,factIds:[0],framing:'hypothetical',
+  };
+  const completedBefore=await AIRequest.countDocuments({userId,status:'completed',provider:'gemini'});
+  mockCreate.mockRejectedValueOnce(new Error('ECONNREFUSED primary unreachable'))
+    .mockResolvedValueOnce({choices:[{message:{content:JSON.stringify({questions:[securityCandidate]})},finish_reason:'stop'}],usage:{total_tokens:100}});
+  const generated=await generatePersonalizedQuestions(userId,'Security',1);
+  expect(generated).toHaveLength(1);
+  expect(generated[0].generatorModel).toBe('gemini-fallback-model');
+  expect(await AIRequest.countDocuments({userId,status:'completed',provider:'gemini'})).toBe(completedBefore+1);
+});
+
 test('mocked Google login verifies state and nonce, creates an account, and rejects replay',async()=>{
   config.google.clientId='fixture-client';config.google.clientSecret='fixture-secret';
   const flow=await googleAuth.begin();

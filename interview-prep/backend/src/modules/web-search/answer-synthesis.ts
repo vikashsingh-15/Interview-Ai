@@ -1,5 +1,4 @@
-import OpenAI from 'openai';
-import { createAIClient, hasAI } from '../../common/services/ai-provider';
+import { withAIFallback, hasAI } from '../../common/services/ai-provider';
 import config from '../../config';
 import logger from '../../config/logger';
 import { SearchResult, SynthesizedAnswer } from './web-search.types';
@@ -13,10 +12,6 @@ import { SearchResult, SynthesizedAnswer } from './web-search.types';
  * available.
  */
 
-function getClient(): OpenAI | null {
-  return hasAI() ? createAIClient() : null;
-}
-
 const MAX_CONTEXT_CHARS = 8000;
 
 export async function synthesizeAnswer(
@@ -27,34 +22,37 @@ export async function synthesizeAnswer(
   const generatedAt = new Date();
   const basedOn = [...new Set([...results.map((r) => r.url), ...pages.map((p) => p.url)])].filter(Boolean).slice(0, 10);
 
-  const client = config.search.synthesizeWithAI ? getClient() : null;
-
-  if (client) {
+  // Tries the primary provider, then the configured fallback, before the
+  // extract-based heuristic. Malformed or insufficient output triggers the
+  // next provider (throw), never a wrong answer.
+  if (config.search.synthesizeWithAI && hasAI()) {
     try {
       const context = buildContext(query, results, pages);
 
-      const completion = await client.chat.completions.create({
-        model: config.ai.model,
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a technical research assistant for interview preparation. ' +
-              'Answer strictly from the provided search context. If the context is insufficient, say so and lower confidence. ' +
-              'Return ONLY JSON with keys: summary (string), keyPoints (string[]), caveats (string[]), confidence (number 0..1).',
-          },
-          {
-            role: 'user',
-            content: `Question: ${query}\n\nSearch context:\n${context}`,
-          },
-        ],
-        response_format: { type: 'json_object' },
+      const parsed = await withAIFallback(async (client, candidate) => {
+        const completion = await client.chat.completions.create({
+          model: candidate.model,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a technical research assistant for interview preparation. ' +
+                'Answer strictly from the provided search context. If the context is insufficient, say so and lower confidence. ' +
+                'Return ONLY JSON with keys: summary (string), keyPoints (string[]), caveats (string[]), confidence (number 0..1).',
+            },
+            {
+              role: 'user',
+              content: `Question: ${query}\n\nSearch context:\n${context}`,
+            },
+          ],
+          response_format: { type: 'json_object' },
+        });
+        const parsedJson = JSON.parse(completion.choices?.[0]?.message?.content || '{}');
+        if (!String(parsedJson.summary || '').trim()) throw new Error('AI returned no usable summary');
+        return parsedJson;
       });
-
-      const raw = completion.choices?.[0]?.message?.content || '{}';
-      const parsed = JSON.parse(raw);
 
       return {
         summary: String(parsed.summary || '').trim() || 'No answer could be synthesized.',
@@ -66,7 +64,7 @@ export async function synthesizeAnswer(
         generatedAt,
       };
     } catch (err) {
-      logger.warn('AI answer synthesis failed, falling back to heuristic', {
+      logger.warn('AI answer synthesis failed on all providers, falling back to heuristic', {
         error: (err as Error).message,
       });
     }

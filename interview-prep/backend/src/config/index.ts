@@ -33,6 +33,14 @@ export const config = {
     customBaseURL: process.env.AI_BASE_URL || '',
     embeddingModel: process.env.AI_EMBEDDING_MODEL || '',
     timeout:60000, retryCount:1, dailyRequestLimit:40,
+    // Optional second provider. Used automatically when the primary hits a
+    // rate limit, quota, timeout or returns unusable output.
+    fallback: {
+      provider: process.env.AI_FALLBACK_PROVIDER || 'openrouter',
+      apiKey: process.env.AI_FALLBACK_API_KEY || '',
+      model: process.env.AI_FALLBACK_MODEL || '',
+      customBaseURL: process.env.AI_FALLBACK_BASE_URL || '',
+    },
   },
   upload: {
     maxSizeMB:10, allowedTypes:['pdf','docx'],

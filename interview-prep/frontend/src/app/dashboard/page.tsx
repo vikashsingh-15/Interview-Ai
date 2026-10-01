@@ -99,7 +99,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-brand-textSecondary">Today&apos;s Progress</p>
                   <p className="text-2xl font-bold text-brand-primary">
-                    {session?.completedQuestions ?? 0} / {session?.totalQuestions ?? 0} answered
+                    {session?.completedQuestions ?? 0} / {session?.totalQuestions ?? 0} reviewed
                   </p>
                 </div>
               </div>

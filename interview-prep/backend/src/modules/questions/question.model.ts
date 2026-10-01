@@ -111,6 +111,11 @@ export interface IQuestion {
   // Content (for reference answers, hints, etc.)
   shortAnswer?: string;
   detailedAnswer?: string;
+  interviewAnswer?: string;
+  interviewAnswerSections?: {
+    direct: string; questionFocus: string; why: string; how: string;
+    example: string; tradeOff: string; summary: string;
+  };
   internalWorking?: string;
   practicalExample?: string;
   productionContext?: string;
@@ -309,6 +314,8 @@ const questionSchema = new Schema<IQuestion>(
     // Content
     shortAnswer: String,
     detailedAnswer: String,
+    interviewAnswer: String,
+    interviewAnswerSections: Schema.Types.Mixed,
     internalWorking: String,
     practicalExample: String,
     productionContext: String,

@@ -8,8 +8,8 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/Progress';
-import { Textarea } from '@/components/ui/Textarea';
 import api from '@/lib/api';
+import { RevisionSchedule } from '@/components/revision/RevisionSchedule';
 import { cn } from '@/lib/utils';
 
 interface QuestionItem {
@@ -52,35 +52,19 @@ interface SessionDetail {
   }[];
 }
 
-interface AnswerEvaluation {
-  overallScore: number;
+interface StructuredAnswer {
+  direct: string;
+  questionFocus: string;
+  why: string;
+  how: string;
+  example: string;
+  tradeOff: string;
   summary: string;
-  strengths: string[];
-  weaknesses: string[];
-  missingPoints: string[];
-  improvementSuggestions: string[];
-  keyConceptsToRevise: string[];
-  strongerAnswerStructure?: string;
 }
 
-interface AnswerResult {
-  score: number;
-  evaluationSource: 'ai' | 'heuristic' | 'none';
-  evaluation: AnswerEvaluation | null;
-  scheduledForRevision: boolean;
-  referenceAnswer: string | null;
-}
-
-function scoreColor(score: number): string {
-  if (score >= 0.7) return 'text-emerald-600';
-  if (score >= 0.4) return 'text-amber-600';
-  return 'text-red-600';
-}
-
-function scoreBg(score: number): string {
-  if (score >= 0.7) return 'bg-emerald-100';
-  if (score >= 0.4) return 'bg-amber-100';
-  return 'bg-red-100';
+interface RevealedAnswer {
+  sections?: StructuredAnswer;
+  legacyAnswer?: string;
 }
 
 export default function TodaySessionPage() {
@@ -90,13 +74,12 @@ export default function TodaySessionPage() {
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answerText, setAnswerText] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<AnswerResult | null>(null);
-  const [showReference, setShowReference] = useState(false);
+  const [revealedAnswers, setRevealedAnswers] = useState<Record<string, RevealedAnswer>>({});
+  const [revealing, setRevealing] = useState(false);
+  const [markingReviewed, setMarkingReviewed] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [retryingQuestions, setRetryingQuestions] = useState(false);
-  const [completed, setCompleted] = useState<{ averageScore: number; correctQuestions: number } | null>(null);
+  const [completed, setCompleted] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -113,6 +96,7 @@ export default function TodaySessionPage() {
       const detailRes = await api.get(`/sessions/${sessionId}`);
       const detail: SessionDetail = detailRes.data.data;
       setSession(detail);
+      setError(null);
 
       const flat: QuestionItem[] = [];
       for (const section of detail.sections || []) {
@@ -123,8 +107,9 @@ export default function TodaySessionPage() {
       flat.sort((a, b) => a.order - b.order);
       setQuestions(flat);
 
-      const firstUnanswered = flat.findIndex((q) => q.status !== 'answered');
+      const firstUnanswered = flat.findIndex((q) => q.status !== 'answered' && q.status !== 'reviewed');
       setCurrentIndex(firstUnanswered === -1 ? flat.length : firstUnanswered);
+      return detail;
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Failed to load today\u2019s session');
     } finally {
@@ -138,39 +123,43 @@ export default function TodaySessionPage() {
     }
   }, [isAuthenticated, loadSession]);
 
-  const currentQuestion = questions[currentIndex];
-  const answeredCount = useMemo(() => questions.filter((q) => q.status === 'answered').length, [questions]);
+  useEffect(() => {
+    if (session?.generationState !== 'generating') return;
+    const timer = setInterval(() => { void loadSession(); }, 5000);
+    return () => clearInterval(timer);
+  }, [session?.generationState, loadSession]);
 
-  const handleSubmit = async () => {
-    if (!session || !currentQuestion || answerText.trim().length < 10) return;
-    setSubmitting(true);
+  const currentQuestion = questions[currentIndex];
+  const answeredCount = useMemo(() => questions.filter((q) => q.status === 'answered' || q.status === 'reviewed').length, [questions]);
+
+  const revealAnswer = async () => {
+    if (!session || !currentQuestion || revealing) return;
+    setRevealing(true);
     setError(null);
     try {
-      const res = await api.post(
-        `/sessions/${session.sessionId}/answers/${currentQuestion.id}`,
-        { answer: answerText.trim() }
-      );
-      const data: AnswerResult = res.data.data;
-      setResult(data);
-      setShowReference(false);
-
-      setQuestions((prev) =>
-        prev.map((q, i) => (i === currentIndex ? { ...q, status: 'answered', finalScore: data.score } : q))
-      );
-      if (session) {
-        setSession({ ...session, completedQuestions: session.completedQuestions + 1 });
-      }
+      const res = await api.get(`/sessions/${session.sessionId}/questions/${currentQuestion.id}/answer`);
+      setRevealedAnswers(prev => ({ ...prev, [currentQuestion.id]: res.data.data }));
     } catch (err: any) {
-      setError(err?.response?.data?.message || 'Failed to submit answer');
+      setError(err?.response?.data?.error?.message || 'Could not load the answer. Try again.');
     } finally {
-      setSubmitting(false);
+      setRevealing(false);
     }
   };
 
-  const handleNext = () => {
-    setResult(null);
-    setAnswerText('');
-    setCurrentIndex((i) => Math.min(i + 1, questions.length));
+  const markReviewed = async () => {
+    if (!session || !currentQuestion || !revealedAnswers[currentQuestion.id] || markingReviewed) return;
+    setMarkingReviewed(true);
+    setError(null);
+    try {
+      const res = await api.post(`/sessions/${session.sessionId}/questions/${currentQuestion.id}/review`);
+      setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? { ...q, status:'reviewed' } : q));
+      setSession(prev => prev ? { ...prev, completedQuestions:res.data.data.completedQuestions } : prev);
+      setCurrentIndex(i => Math.min(i+1, questions.length));
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Could not mark this question reviewed.');
+    } finally {
+      setMarkingReviewed(false);
+    }
   };
 
   const retryQuestionGeneration = async () => {
@@ -182,7 +171,12 @@ export default function TodaySessionPage() {
       await api.post('/sessions/generate', { retryEmpty: true });
       await loadSession();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || err?.response?.data?.message || 'Could not generate questions. Check your AI provider settings and try again.');
+      // A proxy may time out while the backend is still generating. Read its
+      // current state instead of retaining an old provider's error message.
+      const latest = await loadSession();
+      if (!latest || latest.generationState === 'failed') {
+        setError(latest?.generationMessage || err?.response?.data?.error?.message || err?.response?.data?.message || 'Could not retrieve generation status. Refresh to check again.');
+      }
       setIsLoading(false);
     } finally {
       setRetryingQuestions(false);
@@ -194,10 +188,7 @@ export default function TodaySessionPage() {
     setCompleting(true);
     try {
       await api.post(`/sessions/${session.sessionId}/complete`);
-      setCompleted({
-        averageScore: session.averageScore,
-        correctQuestions: questions.filter((q) => (q.finalScore ?? 0) >= 0.7).length,
-      });
+      setCompleted(true);
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Failed to complete session');
     } finally {
@@ -242,22 +233,8 @@ export default function TodaySessionPage() {
               </div>
               <h1 className="mt-6 text-3xl font-bold text-brand-primary">Session complete!</h1>
               <p className="mt-2 text-brand-textSecondary">
-                You answered {questions.length} question{questions.length === 1 ? '' : 's'} today.
+                You reviewed {questions.length} question{questions.length === 1 ? '' : 's'} today.
               </p>
-              <div className="mt-8 grid grid-cols-2 gap-4">
-                <div className="rounded-lg bg-brand-background p-4">
-                  <p className="text-sm text-brand-textSecondary">Average score</p>
-                  <p className={cn('text-2xl font-bold', scoreColor(completed.averageScore))}>
-                    {Math.round((completed.averageScore || 0) * 100)}%
-                  </p>
-                </div>
-                <div className="rounded-lg bg-brand-background p-4">
-                  <p className="text-sm text-brand-textSecondary">Strong answers</p>
-                  <p className="text-2xl font-bold text-brand-primary">
-                    {completed.correctQuestions}/{questions.length}
-                  </p>
-                </div>
-              </div>
               <div className="mt-8 flex gap-3 justify-center">
                 <Link href="/dashboard">
                   <Button>Back to dashboard</Button>
@@ -266,10 +243,6 @@ export default function TodaySessionPage() {
                   <Button variant="secondary">View calendar</Button>
                 </Link>
               </div>
-              <p className="mt-6 text-xs text-brand-textSecondary">
-                Weak answers (score &lt; 70%) were scheduled for spaced revision — they&apos;ll resurface in a
-                future session.
-              </p>
             </CardContent>
           </Card>
         </div>
@@ -309,16 +282,16 @@ export default function TodaySessionPage() {
     );
   }
 
-  // ---- All answered ----
+  // ---- All reviewed ----
   if (!currentQuestion) {
     return (
       <div className="min-h-screen bg-brand-background py-12 px-4">
         <div className="mx-auto max-w-2xl">
           <Card>
             <CardContent className="p-10 text-center">
-              <h1 className="text-2xl font-bold text-brand-primary">All questions answered</h1>
+              <h1 className="text-2xl font-bold text-brand-primary">All questions reviewed</h1>
               <p className="mt-2 text-brand-textSecondary">
-                Nice work — {answeredCount} question{answeredCount === 1 ? '' : 's'} done today.
+                {answeredCount} question{answeredCount === 1 ? '' : 's'} reviewed today.
               </p>
               <div className="mt-8 flex gap-3 justify-center">
                 <Button onClick={handleComplete} isLoading={completing}>
@@ -348,11 +321,14 @@ export default function TodaySessionPage() {
               Day {session?.userDayNumber} — {typeLabel} section
             </p>
             <p className="text-sm text-brand-textSecondary">
-              {answeredCount} / {questions.length} answered
+              {answeredCount} / {questions.length} reviewed
             </p>
           </div>
           <Progress value={answeredCount} max={questions.length || 1} />
         </div>
+
+        {/* Spaced revision plan: due +1/+7/+14/+30 day buckets with reveal answers */}
+        <RevisionSchedule />
 
         {/* Question card */}
         <Card>
@@ -385,124 +361,43 @@ export default function TodaySessionPage() {
                 {['too_easy','too_hard','already_know','not_relevant','duplicate','incorrect','need_revision','skipped'].map(v=><option key={v} value={v}>{v.replace(/_/g,' ')}</option>)}
               </select>
             </label>
-            {!result ? (
-              <>
-                <Textarea
-                  value={answerText}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setAnswerText(e.target.value)}
-                  placeholder="Type your answer — explain your reasoning, trade-offs, and edge cases. The more detail, the better the evaluation."
-                  rows={10}
-                  className="w-full"
-                />
-                {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-                <div className="mt-4 flex items-center justify-between">
-                  <p className="text-xs text-brand-textSecondary">
-                    {answerText.trim().length < 10
-                      ? 'Minimum 10 characters'
-                      : `Grading against a rubric${result === null ? '…' : ''}`}
-                  </p>
-                  <Button onClick={handleSubmit} disabled={answerText.trim().length < 10} isLoading={submitting}>
-                    Submit answer
-                  </Button>
-                </div>
-              </>
+            {!revealedAnswers[q.id] ? (
+              <Button onClick={revealAnswer} isLoading={revealing}>Show detailed answer</Button>
             ) : (
-              /* ---- Evaluation result ---- */
               <div>
-                <div className={cn('rounded-lg p-5', scoreBg(result.score))}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-brand-textSecondary">Your score</p>
-                      <p className={cn('text-4xl font-bold', scoreColor(result.score))}>
-                        {Math.round(result.score * 100)}%
-                      </p>
-                    </div>
-                    <Badge variant="neutral">
-                      {result.evaluationSource === 'ai' ? 'AI-graded' : result.evaluationSource === 'heuristic' ? 'Keyword-graded' : 'Ungraded'}
-                    </Badge>
+                <h3 className="font-semibold text-brand-primary">Interview-ready answer</h3>
+                {revealedAnswers[q.id].sections ? (
+                  <div className="mt-3 space-y-4">
+                    {([
+                      ['Direct answer', 'direct'],
+                      ['What the question asks', 'questionFocus'],
+                      ['Why', 'why'],
+                      ['How', 'how'],
+                      ['Concrete example', 'example'],
+                      ['Trade-off', 'tradeOff'],
+                      ['Summary', 'summary'],
+                    ] as const).map(([label, key]) => (
+                      <section key={key} className="rounded-lg border border-brand-border bg-brand-background p-4">
+                        <h4 className="text-sm font-semibold text-brand-primary">{label}</h4>
+                        <p className="mt-2 text-sm leading-7 text-brand-text whitespace-pre-wrap">
+                          {revealedAnswers[q.id].sections![key]}
+                        </p>
+                      </section>
+                    ))}
                   </div>
-                  {result.evaluation?.summary && (
-                    <p className="mt-3 text-sm text-brand-text">{result.evaluation.summary}</p>
-                  )}
-                </div>
-
-                {result.scheduledForRevision && (
-                  <p className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    📌 Scheduled for spaced revision — this question will resurface until you score 70%+.
-                  </p>
-                )}
-
-                {result.evaluation && (
-                  <div className="mt-4 space-y-4">
-                    {result.evaluation.strengths.length > 0 && (
-                      <div>
-                        <p className="text-sm font-semibold text-emerald-700">Strengths</p>
-                        <ul className="mt-1 list-disc list-inside text-sm text-brand-text">
-                          {result.evaluation.strengths.map((s, i) => <li key={i}>{s}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {result.evaluation.weaknesses.length > 0 && (
-                      <div>
-                        <p className="text-sm font-semibold text-red-700">Weaknesses</p>
-                        <ul className="mt-1 list-disc list-inside text-sm text-brand-text">
-                          {result.evaluation.weaknesses.map((s, i) => <li key={i}>{s}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {result.evaluation.missingPoints.length > 0 && (
-                      <div>
-                        <p className="text-sm font-semibold text-amber-700">Missing points</p>
-                        <ul className="mt-1 list-disc list-inside text-sm text-brand-text">
-                          {result.evaluation.missingPoints.map((s, i) => <li key={i}>{s}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {result.evaluation.improvementSuggestions.length > 0 && (
-                      <div>
-                        <p className="text-sm font-semibold text-brand-primary">How to improve</p>
-                        <ul className="mt-1 list-disc list-inside text-sm text-brand-text">
-                          {result.evaluation.improvementSuggestions.map((s, i) => <li key={i}>{s}</li>)}
-                        </ul>
-                      </div>
-                    )}
-                    {result.evaluation.strongerAnswerStructure && (
-                      <div className="rounded-lg bg-brand-background p-4">
-                        <p className="text-sm font-semibold text-brand-primary">Stronger answer structure</p>
-                        <p className="mt-1 text-sm text-brand-text">{result.evaluation.strongerAnswerStructure}</p>
-                      </div>
-                    )}
+                ) : (
+                  <div className="mt-3 rounded-lg border border-brand-border bg-brand-background p-5 text-sm leading-7 text-brand-text whitespace-pre-wrap">
+                    {revealedAnswers[q.id].legacyAnswer}
                   </div>
                 )}
-
-                {result.referenceAnswer && (
-                  <div className="mt-4">
-                    <button
-                      onClick={() => setShowReference((v) => !v)}
-                      className="text-sm font-medium text-brand-secondary hover:underline"
-                    >
-                      {showReference ? 'Hide' : 'Show'} reference answer
-                    </button>
-                    {showReference && (
-                      <div className="mt-2 rounded-lg border border-brand-border p-4 text-sm text-brand-text whitespace-pre-wrap">
-                        {result.referenceAnswer}
-                      </div>
-                    )}
+                {q.status !== 'answered' && q.status !== 'reviewed' && (
+                  <div className="mt-5 flex justify-end">
+                    <Button onClick={markReviewed} isLoading={markingReviewed}>Mark reviewed and continue</Button>
                   </div>
                 )}
-
-                {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-
-                <div className="mt-6 flex justify-end">
-                  <Button onClick={handleNext}>
-                    {currentIndex + 1 < questions.length ? 'Next question' : 'Finish'}
-                    <svg className="ml-2 w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                  </Button>
-                </div>
               </div>
             )}
+            {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
           </CardContent>
         </Card>
 
@@ -512,21 +407,15 @@ export default function TodaySessionPage() {
             <button
               key={item.id}
               onClick={() => {
-                if (item.status === 'answered' || i <= currentIndex) {
-                  setResult(null);
-                  setAnswerText('');
+                if (item.status === 'answered' || item.status === 'reviewed' || i <= currentIndex) {
                   setCurrentIndex(i);
                 }
               }}
-              title={item.status === 'answered' ? `Scored ${Math.round((item.finalScore ?? 0) * 100)}%` : 'Question ' + (i + 1)}
+              title={item.status === 'reviewed' ? 'Reviewed' : 'Question ' + (i + 1)}
               className={cn(
                 'w-8 h-8 rounded-full text-xs font-medium transition-colors',
-                item.status === 'answered'
-                  ? (item.finalScore ?? 0) >= 0.7
-                    ? 'bg-emerald-500 text-white'
-                    : (item.finalScore ?? 0) >= 0.4
-                      ? 'bg-amber-500 text-white'
-                      : 'bg-red-500 text-white'
+                item.status === 'answered' || item.status === 'reviewed'
+                  ? 'bg-emerald-500 text-white'
                   : i === currentIndex
                     ? 'bg-brand-secondary text-white ring-2 ring-brand-secondary/30'
                     : 'bg-white border border-brand-border text-brand-textSecondary'

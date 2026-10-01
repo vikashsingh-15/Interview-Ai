@@ -1,8 +1,14 @@
-import { normalizeQuestion, questionHash, nearDuplicate, cosine, generatedBatchSchema } from '../../src/modules/questions/personalized-generator';
+import { normalizeQuestion, questionHash, nearDuplicate, cosine, generatedBatchSchema, matchesQuestionTopic } from '../../src/modules/questions/personalized-generator';
 import { parseResumeBuffer, extractResumeText } from '../../src/modules/resume/resume-parser';
 import { docxResume, pdfResume } from '../helpers/resume-fixtures';
 
 describe('resume extraction and question identity',()=>{
+  test('fallback practice category does not require its literal label in the answer',()=>{
+    expect(matchesQuestionTopic('Professional experience', 'Explain how you would prioritize competing stakeholder requirements.')).toBe(true);
+    expect(matchesQuestionTopic('Redis', 'Explain Redis cache eviction.')).toBe(true);
+    expect(matchesQuestionTopic('Java', 'Explain JavaScript closures.')).toBe(false);
+    expect(matchesQuestionTopic('Redis', 'Explain a SQL join.')).toBe(false);
+  });
   test('DOCX parsing extracts actual content without sample employers or projects',async()=>{
     const result=await parseResumeBuffer(await docxResume('A real candidate knows Python and React. Contact real@example.test.'),
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document','test');

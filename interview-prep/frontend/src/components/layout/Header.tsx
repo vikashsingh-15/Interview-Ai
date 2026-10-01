@@ -3,11 +3,34 @@
 import Link from 'next/link';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function Header() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const desktopAvatarRef = useRef<HTMLDivElement>(null);
+  const mobileAvatarRef = useRef<HTMLDivElement>(null);
+
+  // Close the account menu when clicking anywhere else or pressing Escape.
+  // Both avatar buttons stay in the DOM (one per breakpoint), so a click is
+  // outside only when it misses both wrappers.
+  useEffect(() => {
+    if (!avatarOpen) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!desktopAvatarRef.current?.contains(target) && !mobileAvatarRef.current?.contains(target)) {
+        setAvatarOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAvatarOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [avatarOpen]);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-brand-border bg-white/80 backdrop-blur-md">
@@ -99,20 +122,87 @@ export function Header() {
 
           {/* Auth section */}
           <div className="flex items-center gap-4">
-            {isAuthenticated && user ? (
-              <div className="hidden md:flex items-center gap-4">
-                <span className="text-sm text-brand-textSecondary">
-                  {user.name}
-                </span>
-                <Link
-                  href="/profile"
-                  className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-brand-secondary/10 text-brand-secondary"
-                >
-                  <span className="text-sm font-medium">
-                    {user.name.charAt(0).toUpperCase()}
-                  </span>
-                </Link>
+            {authLoading ? (
+              <div className="hidden md:flex items-center">
+                <div className="w-8 h-8 rounded-full bg-brand-border/40 animate-pulse" aria-label="Loading session" />
               </div>
+            ) : isAuthenticated && user ? (
+              <>
+                <div className="hidden md:flex items-center gap-4">
+                  <span className="text-sm text-brand-textSecondary">
+                    {user.name}
+                  </span>
+                  <div className="relative" ref={desktopAvatarRef}>
+                    <button
+                      onClick={() => setAvatarOpen((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={avatarOpen}
+                      title="Account menu"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-brand-secondary/10 text-brand-secondary hover:bg-brand-secondary/20 transition-colors"
+                    >
+                      <span className="text-sm font-medium">
+                        {user.name.charAt(0).toUpperCase()}
+                      </span>
+                    </button>
+                    {avatarOpen && (
+                      <div
+                        role="menu"
+                        className="absolute right-0 mt-2 w-48 rounded-lg border border-brand-border bg-white shadow-lg py-1 z-50"
+                      >
+                        <div className="px-4 py-2 border-b border-brand-border">
+                          <p className="text-sm font-medium text-brand-text truncate">{user.name}</p>
+                          <p className="text-xs text-brand-textSecondary truncate">{user.email}</p>
+                        </div>
+                        <Link
+                          href="/settings"
+                          role="menuitem"
+                          className="block px-4 py-2 text-sm text-brand-text hover:bg-brand-primary/5"
+                          onClick={() => setAvatarOpen(false)}
+                        >
+                          Settings
+                        </Link>
+                        <button
+                          role="menuitem"
+                          onClick={() => { setAvatarOpen(false); void logout(); }}
+                          className="block w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50"
+                        >
+                          Sign out
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Mobile: avatar button opens the same menu */}
+                <div className="relative md:hidden" ref={mobileAvatarRef}>
+                  <button
+                    onClick={() => setAvatarOpen((v) => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={avatarOpen}
+                    aria-label="Account menu"
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-brand-secondary/10 text-brand-secondary"
+                  >
+                    <span className="text-sm font-medium">{user.name.charAt(0).toUpperCase()}</span>
+                  </button>
+                  {avatarOpen && (
+                    <div role="menu" className="absolute right-0 mt-2 w-48 rounded-lg border border-brand-border bg-white shadow-lg py-1 z-50">
+                      <div className="px-4 py-2 border-b border-brand-border">
+                        <p className="text-sm font-medium text-brand-text truncate">{user.name}</p>
+                        <p className="text-xs text-brand-textSecondary truncate">{user.email}</p>
+                      </div>
+                      <Link href="/settings" role="menuitem" className="block px-4 py-2 text-sm text-brand-text hover:bg-brand-primary/5" onClick={() => setAvatarOpen(false)}>
+                        Settings
+                      </Link>
+                      <button
+                        role="menuitem"
+                        onClick={() => { setAvatarOpen(false); void logout(); }}
+                        className="block w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
             ) : (
               <div className="hidden md:flex items-center gap-3">
                 <Link href="/login">
@@ -120,7 +210,7 @@ export function Header() {
                     Sign in
                   </button>
                 </Link>
-                <Link href="/register">
+                <Link href="/login">
                   <button className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg bg-brand-secondary text-white hover:bg-brand-secondary/90 transition-colors">
                     Get Started
                   </button>
@@ -151,7 +241,7 @@ export function Header() {
         {isMenuOpen && (
           <div className="md:hidden py-4 border-t border-brand-border animate-fade-in">
             <div className="flex flex-col space-y-4">
-              {isAuthenticated ? (
+              {authLoading ? null : isAuthenticated ? (
                 <>
                   <Link
                     href="/dashboard"
@@ -227,7 +317,7 @@ export function Header() {
                     Sign In
                   </Link>
                   <Link
-                    href="/register"
+                    href="/login"
                     className="text-brand-secondary font-medium py-2 hover:text-brand-secondary"
                     onClick={() => setIsMenuOpen(false)}
                   >

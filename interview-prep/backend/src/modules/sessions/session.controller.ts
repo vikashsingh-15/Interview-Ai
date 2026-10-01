@@ -197,6 +197,19 @@ router.get(
 );
 
 // Submit answer
+router.get('/:sessionId/questions/:questionId/answer', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const answer = await sessionService.getInterviewAnswer(req.params.sessionId, req.params.questionId, req.user!.id);
+    res.json({ success:true, data:{ answer } });
+  }));
+
+router.post('/:sessionId/questions/:questionId/review', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const completedQuestions = await sessionService.markQuestionReviewed(req.params.sessionId, req.params.questionId, req.user!.id);
+    res.json({ success:true, data:{ completedQuestions } });
+  }));
+
+// Submit answer
 router.post(
   '/:sessionId/answers/:questionId',
   authenticate,
