@@ -11,6 +11,7 @@ import Resume from './resume.model';
 import { ResumeVersion } from './resume.model';
 import ResumeProfile, { IResumeProfile, IExtractedSkill, IExperience, IProject, IEducation, ICertification } from './resume-profile.model';
 import InterviewProfile from '../profile/interview-profile.model';
+import { syncProjectsFromResume } from '../projects/sync-from-resume';
 import { BadRequestError, NotFoundError, InternalError } from '../../common/filters/error-filter';
 import { Question } from '../questions/question.model';
 
@@ -509,10 +510,20 @@ export const resumeService = {
 
     await interviewProfile.save();
 
+    // Materialize confirmed resume projects as Project records so the
+    // projects page and mock interviews can use them.
+    const syncedProjects = await syncProjectsFromResume(userId, resumeProfile).catch((error) => {
+      logger.warn('Project sync failed; projects page may be stale', {
+        userId, error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    });
+
     logger.info('Interview profile regenerated', {
       userId,
       skillsCount: confirmedSkills.length,
       projectsCount: confirmedProjects.length,
+      syncedProjects,
     });
 
     return {

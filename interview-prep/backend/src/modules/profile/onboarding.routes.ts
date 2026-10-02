@@ -8,14 +8,14 @@ import ResumeProfile from '../resume/resume-profile.model';
 import InterviewProfile from './interview-profile.model';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { resumeService } from '../resume/resume.service';
-import { extractedResumeSchema } from '../resume/resume-parser';
+import { extractedResumeSchema, skillEntrySchema, experienceEntrySchema, projectEntrySchema } from '../resume/resume-parser';
 
 const router = Router();
 router.use(authenticate);
 const confirmation = { isConfirmed: z.boolean().default(false), isRemoved: z.boolean().default(false) };
-const skill = extractedResumeSchema.shape.skills._def.innerType.element.extend(confirmation);
-const experience = extractedResumeSchema.shape.experience._def.innerType.element.extend(confirmation);
-const project = extractedResumeSchema.shape.projects._def.innerType.element.extend(confirmation);
+const skill = skillEntrySchema.extend(confirmation);
+const experience = experienceEntrySchema.extend(confirmation); 
+const project = projectEntrySchema.extend(confirmation);
 export const reviewSchema = z.object({
   fullName: z.string().max(200).optional(), currentRole: z.string().max(200).optional(),
   totalExperienceMonths: z.number().int().min(0).max(1200).optional(),

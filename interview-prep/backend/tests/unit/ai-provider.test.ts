@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import config from '../../src/config';
 import { aiBaseURL, createAIClient, hasAI, hasFallbackAI, aiProviderCandidates, withAIFallback, setActiveProvider, getActiveProvider } from '../../src/common/services/ai-provider';
+import { extractJsonObject } from '../../src/common/services/structured-ai';
 jest.mock('openai',()=>({__esModule:true,default:jest.fn().mockImplementation(()=>({}))}));
 beforeEach(()=>{
   config.ai.provider='openrouter';config.ai.apiKey='fixture-key';config.ai.model='fixture-model';config.ai.customBaseURL='';
@@ -99,5 +100,34 @@ describe('fallback provider',()=>{
     config.ai.fallback.provider='custom';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';
     config.ai.fallback.customBaseURL='http://untrusted.example/v1';
     expect(()=>aiProviderCandidates()).toThrow('HTTPS');
+  });
+  test('a caller can pin which provider serves the call',async()=>{
+    config.ai.provider='openrouter';config.ai.apiKey='primary-key';config.ai.model='primary-model';
+    config.ai.fallback={provider:'gemini',apiKey:'fallback-key',model:'fallback-model',customBaseURL:''};
+    await expect(withAIFallback(async()=>'served-by-pinned-provider', 'gemini')).resolves.toBe('served-by-pinned-provider');
+    expect(OpenAI).toHaveBeenLastCalledWith(expect.objectContaining({apiKey:'fallback-key'}));
+  });
+});
+
+describe('structured AI response parsing',()=>{
+  test('a bare JSON object is parsed',()=>{
+    expect(extractJsonObject('{"questions":[]}')).toEqual({questions:[]});
+  });
+  test('fenced JSON and trailing prose still parse',()=>{
+    // Providers routinely wrap the payload or add a remark after it; a bare
+    // JSON.parse would fail even though the object is intact.
+    expect(extractJsonObject('```json\n{"a":1}\n```')).toEqual({a:1});
+    expect(extractJsonObject('{"a":1}\n\nHope this helps!')).toEqual({a:1});
+    expect(extractJsonObject('Here you go:\n{"a":1}')).toEqual({a:1});
+  });
+  test('braces inside strings do not end the object early',()=>{
+    expect(extractJsonObject('{"question":"Explain {braces} in JSON","difficulty":"EASY"} trailing'))
+      .toEqual({question:'Explain {braces} in JSON',difficulty:'EASY'});
+    expect(extractJsonObject('{"question":"a \\"quoted\\" brace }","difficulty":"HARD"}'))
+      .toEqual({question:'a "quoted" brace }',difficulty:'HARD'});
+  });
+  test('responses without a complete object are rejected',()=>{
+    expect(()=>extractJsonObject('no json here')).toThrow('no JSON object');
+    expect(()=>extractJsonObject('{"a":1')).toThrow('unterminated');
   });
 });

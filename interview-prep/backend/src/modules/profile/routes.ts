@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
+import { hasAI, hasFallbackAI, getActiveProvider } from '../../common/services/ai-provider';
+import aiConfig from '../../config';
 import logger from '../../config/logger';
 import { DifficultyChoice } from './interview-profile.model';
 
@@ -135,6 +137,48 @@ router.put(
       success: true,
       data: { preferences: profile.preferences },
       message: 'Preferences updated. Your next generated session will use them.',
+    });
+  })
+);
+
+/**
+ * GET /api/profile/ai-status
+ * Non-secret diagnostics for AI question generation: which provider/model is
+ * configured, whether a fallback is usable, and the most recent generation
+ * failures. Lets the UI explain a generation failure without reading server logs.
+ */
+router.get(
+  '/ai-status',
+  authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!req.user) throw new ValidationError('Authentication required');
+
+    const AIRequest = mongoose.model('AIRequest');
+    const recent = await AIRequest.find({ userId: req.user.id })
+      .sort({ createdAt: -1 }).limit(5)
+      .select('purpose provider model promptVersion status createdAt').lean();
+
+    res.json({
+      success: true,
+      data: {
+        configured: hasAI(),
+        provider: aiConfig.ai.provider,
+        model: aiConfig.ai.model,
+        // The key itself is never exposed, only whether one is present.
+        hasApiKey: Boolean(aiConfig.ai.apiKey),
+        activeProvider: getActiveProvider(),
+        fallback: {
+          configured: hasFallbackAI(),
+          provider: aiConfig.ai.fallback.provider,
+          model: aiConfig.ai.fallback.model,
+          hasApiKey: Boolean(aiConfig.ai.fallback.apiKey),
+        },
+        dailyRequestLimit: aiConfig.ai.dailyRequestLimit,
+        recentRequests: recent.map((r: any) => ({
+          purpose: r.purpose, provider: r.provider, model: r.model,
+          status: r.status, at: r.createdAt,
+        })),
+      },
     });
   })
 );

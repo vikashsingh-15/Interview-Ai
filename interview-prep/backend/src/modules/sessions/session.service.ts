@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { structuredAI } from '../../common/services/structured-ai';
 import { hasAI } from '../../common/services/ai-provider';
 
-import { generatePersonalizedQuestions, reserveQuestion } from '../questions/personalized-generator';
+import { generatePersonalizedQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
 import mongoose from 'mongoose';
 import config from '../../config';
 import logger from '../../config/logger';
@@ -201,6 +201,7 @@ export const sessionService = {
   ): Promise<any[]> {
     const session = await DailySession.findById(sessionId);
     if (!session) throw new NotFoundError('Session not found');
+    const sectionFailures:{ topic?: string; title?: string; message: string }[] = [];
     const plan = interviewProfile.dailyPlan?.length ? interviewProfile.dailyPlan : [{
       title:'Professional practice', topic:interviewProfile.confirmedSkills[0] || interviewProfile.targetRole || 'Professional experience',
       type:'technical', count:interviewProfile.preferences.dailyQuestions ?? 5,
@@ -234,10 +235,14 @@ export const sessionService = {
         const prior = await SessionQuestion.find({ sessionId:{ $in:ownedSessions.map(s=>s._id) },
           'questionSnapshot.isCoding':true }).select('questionId').lean();
         const priorQuestions = await Question.find({ _id:{ $in:prior.map(p=>p.questionId) } }).select('sourceId').lean();
-        const problems = await mongoose.model('CodingProblem').find({
+        // Also exclude anything already exposed via QuestionExposure (skip/
+        // regenerate paths), so a skipped problem never resurfaces.
+        const exposed = await exposedQuestionIds(userId);
+        const problemCandidates = await mongoose.model('CodingProblem').find({
           isHidden:false,isDeprecated:false,isInterviewRelevant:true,
           _id:{ $nin:priorQuestions.map(q=>q.sourceId).filter(Boolean) },
-        }).limit(needed).lean();
+        }).limit(needed + exposed.size).lean();
+        const problems = problemCandidates.filter((p:any)=>!exposed.has(String(p._id))).slice(0, needed);
         for (const p of problems) {
           // Canonicalize curated coding metadata; never execute arbitrary AI code.
           const canonical = await Question.findOneAndUpdate({ sourceId:String(p._id), provenance:'CURATED' },
@@ -251,11 +256,19 @@ export const sessionService = {
           await add(canonical);
         }
       } else {
-        const questions = await generatePersonalizedQuestions(userId,planned.topic,needed,planned.type,sessionId);
-        for (const question of questions) await add(question);
+        // One unfillable topic must not void the whole day: record why and let
+        // the remaining sections generate, so the user still gets practice.
+        try {
+          const questions = await generatePersonalizedQuestions(userId,planned.topic,needed,planned.type,sessionId);
+          for (const question of questions) await add(question);
+        } catch (error) {
+          sectionFailures.push({ topic:planned.topic, title:planned.title, message:(error as Error).message });
+          logger.warn('Section question generation failed', { userId, topic:planned.topic,
+            error:(error as Error).message, code:(error as any)?.code });
+        }
       }
       if (section.totalQuestions < planned.count) section.notes =
-        'Not enough new validated questions available. Configure AI or expand your topics; repeats were not inserted.';
+        `Not enough new validated questions available. Configure AI or expand your topics; repeats were not inserted.`;
       await session.save();
 
       async function add(question:any) {
@@ -272,6 +285,10 @@ export const sessionService = {
         section!.totalQuestions = section!.questions.length;
         await session!.save();
       }
+    }
+    if (sectionFailures.length) {
+      const last = session.sections[session.sections.length-1];
+      if (last && !last.notes) last.notes = sectionFailures[0].message;
     }
     return session.sections as any[];
   },
@@ -423,19 +440,50 @@ Return a JSON object with string fields direct, questionFocus, why, how, example
     if (!mapped && !await SessionQuestion.exists({ _id:mappingId, sessionId, status:{$in:['reviewed','answered']} })) {
       throw new ConflictError('Reveal the answer before marking this question reviewed');
     }
-    const all = await SessionQuestion.find({ sessionId }).select('_id sectionId status').lean();
-    const reviewed = all.filter(q=>['answered','reviewed'].includes(q.status));
-    for (const section of session.sections) {
+    return this.recomputeSessionAggregates(session);
+  },
+
+  /**
+   * Skip a pending/presented question. It stays visible in the session for
+   * transparency but counts as resolved, never blocks completion, and does not
+   * affect scores. Re-answering later is still allowed via submitAnswer.
+   */
+  async skipQuestion(sessionId: string, mappingId: string, userId: string): Promise<any> {
+    const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
+    if (!session) throw new NotFoundError('Session not found');
+    const mapped = await SessionQuestion.findOneAndUpdate({ _id:mappingId, sessionId,
+      status:{$in:['pending','presented']} }, { $set:{ status:'skipped' } }, { new:true });
+    if (!mapped) {
+      if (!await SessionQuestion.exists({ _id:mappingId, sessionId })) {
+        throw new NotFoundError('Question not found in session');
+      }
+      throw new ConflictError('Answered or reviewed questions cannot be skipped');
+    }
+    await this.recomputeSessionAggregates(session);
+    return { questionId:mapped._id, status:'skipped' };
+  },
+
+  /**
+   * Recompute section/session progress from SessionQuestion statuses.
+   * Answered and reviewed count as completed; skipped counts as resolved so it
+   * never blocks section completion, but is excluded from score aggregates.
+   */
+  async recomputeSessionAggregates(session: any): Promise<number> {
+    // Reload before saving: callers may hold a stale version after other
+    // writes to the same session document.
+    const target = (await DailySession.findById(session._id)) || session;
+    const all = await SessionQuestion.find({ sessionId:target._id }).select('_id sectionId status finalScore').lean();
+    const answered = all.filter(q=>q.status==='answered');
+    for (const section of target.sections) {
       const entries = all.filter(q=>String(q.sectionId)===String(section._id));
-      section.completedQuestions = entries.filter(q=>['answered','reviewed'].includes(q.status)).length;
+      section.completedQuestions = entries.filter(q=>['answered','reviewed','skipped'].includes(q.status)).length;
       section.status = section.totalQuestions > 0 && section.completedQuestions >= section.totalQuestions ? 'completed':'pending';
     }
-    session.completedQuestions = reviewed.length;
-    const scored = await SessionQuestion.find({ sessionId, status:'answered' }).select('finalScore').lean();
-    session.correctQuestions = scored.filter(q=>(q.finalScore || 0)>=0.7).length;
-    session.averageScore = scored.length ? scored.reduce((sum,q)=>sum+(q.finalScore || 0),0)/scored.length : 0;
-    await session.save();
-    return reviewed.length;
+    target.completedQuestions = all.filter(q=>['answered','reviewed','skipped'].includes(q.status)).length;
+    target.correctQuestions = answered.filter(q=>(q.finalScore || 0)>=0.7).length;
+    target.averageScore = answered.length ? answered.reduce((sum,q)=>sum+(q.finalScore || 0),0)/answered.length : 0;
+    await target.save();
+    return target.completedQuestions;
   },
 
   // Submit answer
@@ -783,6 +831,108 @@ Return a JSON object with string fields direct, questionFocus, why, how, example
       scheduledForRevision: overallScore < 0.7,
       referenceAnswer: question?.detailedAnswer || (question as any)?.expectedAnswer || null,
     };
+  },
+
+  /**
+   * Replace all pending/presented questions in today's session with a fresh
+   * set, leaving answered/reviewed/skipped questions and section structure
+   * intact. Refreshes the daily plan from the user's latest preferences so
+   * changed settings take effect on today's session immediately.
+   */
+  async regenerateTodaySession(userId: string, date: Date = new Date()): Promise<any> {
+    const session = await DailySession.findOne({
+      userId: new mongoose.Types.ObjectId(userId),
+      sessionDate: new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())),
+      isDeleted: false,
+    });
+    if (!session) throw new NotFoundError('No session for today yet. Generate it first.');
+    if (session.generationState === 'generating') {
+      throw new ConflictError('Session generation is already in progress. Reload shortly.');
+    }
+    const interviewProfile = await InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(userId) });
+    if (!interviewProfile?.onboardingCompleted) {
+      throw new NotFoundError('Interview profile not found. Please complete onboarding first.');
+    }
+
+    // Sync section counts from the latest preferences, mirroring the
+    // preferences PUT handler so changed settings apply to today's session.
+    const prefs = (interviewProfile.preferences || {}) as any;
+    const prefMapping: Record<string,string> = { coding:'codingCount', system_design:'systemDesignCount', project:'projectQuestions' };
+    if (interviewProfile.dailyPlan?.length) {
+      let changed = false;
+      for (const field of ['dailyQuestions','codingCount','systemDesignCount','projectQuestions']) {
+        if (prefs[field] === undefined) continue;
+        const sections = interviewProfile.dailyPlan.filter((section:any)=>(prefMapping[section.type] || 'dailyQuestions')===field);
+        if (!sections.length) continue;
+        sections.forEach((section:any,index:number)=>{
+          const next = Math.floor(prefs[field]/sections.length)+(index<prefs[field]%sections.length?1:0);
+          if (section.count !== next) { section.count = next; changed = true; }
+        });
+      }
+      if (changed) { interviewProfile.markModified('dailyPlan'); await interviewProfile.save(); }
+    }
+
+    // Remove only unrevealed questions; answered/reviewed/skipped stay for the record.
+    const pending = await SessionQuestion.find({ sessionId:session._id, status:{$in:['pending','presented']} })
+      .select('_id').lean();
+    if (pending.length) {
+      const pendingIds = new Set(pending.map((p:any)=>String(p._id)));
+      await SessionQuestion.deleteMany({ _id:{ $in:[...pendingIds] } });
+      const fresh = await DailySession.findById(session._id);
+      if (fresh) {
+        for (const section of fresh.sections) {
+          const kept = section.questions.filter((id:any)=>!pendingIds.has(String(id)));
+          if (kept.length === section.questions.length) continue;
+          section.questions = kept;
+          section.totalQuestions = kept.length;
+          section.notes = undefined;
+          section.completedQuestions = Math.min(section.completedQuestions, kept.length);
+          if (kept.length === 0) section.status = 'pending';
+        }
+        fresh.markModified('sections');
+        await fresh.save();
+      }
+    }
+
+    // Refill from the (possibly rewritten) plan via the same lease machinery
+    // as first generation; a failure marks the session so the UI can retry.
+    const owner = randomUUID();
+    const refreshed = await DailySession.findOneAndUpdate({ _id:session._id, generationState:{$ne:'generating'} }, {
+      $set:{ generationState:'generating', generationOwner:owner, generationStartedAt:new Date(),
+        generationMessage:'Regenerating questions with your latest settings', status:'pending' },
+      $unset:{ completedAt:1 },
+    }, { new:true });
+    if (!refreshed) throw new ConflictError('Session generation is already in progress. Reload shortly.');
+    try {
+      const skillGraph = await SkillGraph.findOne({ userId: new mongoose.Types.ObjectId(userId) });
+      const dueRevisions = await Revision.find({
+        userId: new mongoose.Types.ObjectId(userId),
+        status: { $in: ['pending', 'due'] },
+        dueDate: { $lte: date },
+      }).sort({ dueDate: 1 });
+      const sections = await this.generateSections(refreshed._id, userId, interviewProfile, skillGraph, dueRevisions, date);
+      refreshed.sections = sections as any;
+      refreshed.totalQuestions = sections.reduce((sum:number,s:any)=>sum+s.totalQuestions,0);
+      refreshed.generationState = 'completed';
+      const blocked = (sections as any[]).filter((s:any)=>s.notes).map((s:any)=>s.notes);
+      refreshed.generationMessage = refreshed.totalQuestions === 0
+        ? (blocked[0] || 'No new questions were generated. Check your AI provider settings or expand your topics, then retry.')
+        : blocked.length ? 'Some sections contain fewer questions; no repeats were inserted.' : undefined;
+      await DailySession.updateOne({ _id:refreshed._id }, { $set:{
+        sections:refreshed.sections, totalQuestions:refreshed.totalQuestions,
+        generationState:'completed', generationMessage:refreshed.generationMessage,
+      } });
+      await this.recomputeSessionAggregates(refreshed);
+      return refreshed;
+    } catch (error) {
+      await DailySession.updateOne({ _id:refreshed._id }, {
+        $set:{ generationState:'failed', generationMessage:(error as any)?.isOperational
+          ? (error as Error).message
+          : 'Regeneration failed. Check your AI provider settings, then retry.' },
+        $unset:{ generationOwner:1 },
+      });
+      throw error;
+    }
   },
 
   // Mark session as complete

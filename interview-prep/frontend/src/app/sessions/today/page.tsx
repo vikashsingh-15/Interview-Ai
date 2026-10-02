@@ -77,8 +77,10 @@ export default function TodaySessionPage() {
   const [revealedAnswers, setRevealedAnswers] = useState<Record<string, RevealedAnswer>>({});
   const [revealing, setRevealing] = useState(false);
   const [markingReviewed, setMarkingReviewed] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [retryingQuestions, setRetryingQuestions] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [completed, setCompleted] = useState(false);
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function TodaySessionPage() {
       flat.sort((a, b) => a.order - b.order);
       setQuestions(flat);
 
-      const firstUnanswered = flat.findIndex((q) => q.status !== 'answered' && q.status !== 'reviewed');
+      const firstUnanswered = flat.findIndex((q) => !['answered', 'reviewed', 'skipped'].includes(q.status));
       setCurrentIndex(firstUnanswered === -1 ? flat.length : firstUnanswered);
       return detail;
     } catch (err: any) {
@@ -130,7 +132,7 @@ export default function TodaySessionPage() {
   }, [session?.generationState, loadSession]);
 
   const currentQuestion = questions[currentIndex];
-  const answeredCount = useMemo(() => questions.filter((q) => q.status === 'answered' || q.status === 'reviewed').length, [questions]);
+  const answeredCount = useMemo(() => questions.filter((q) => ['answered', 'reviewed', 'skipped'].includes(q.status)).length, [questions]);
 
   const revealAnswer = async () => {
     if (!session || !currentQuestion || revealing) return;
@@ -159,6 +161,42 @@ export default function TodaySessionPage() {
       setError(err?.response?.data?.error?.message || 'Could not mark this question reviewed.');
     } finally {
       setMarkingReviewed(false);
+    }
+  };
+
+  const skipQuestion = async () => {
+    if (!session || !currentQuestion || skipping) return;
+    setSkipping(true);
+    setError(null);
+    try {
+      const res = await api.post(`/sessions/${session.sessionId}/questions/${currentQuestion.id}/skip`);
+      setQuestions(prev => prev.map(q => q.id === currentQuestion.id ? { ...q, status:'skipped' } : q));
+      setSession(prev => prev ? { ...prev, completedQuestions:res.data.data.completedQuestions ?? prev.completedQuestions } : prev);
+      setCurrentIndex(i => {
+        const next = questions.findIndex((q, idx) => idx > i && q.status !== 'answered' && q.status !== 'reviewed' && q.status !== 'skipped');
+        return next === -1 ? questions.length : next;
+      });
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Could not skip this question. Try again.');
+    } finally {
+      setSkipping(false);
+    }
+  };
+
+  const regenerateQuestions = async () => {
+    if (!session || regenerating) return;
+    setRegenerating(true);
+    setError(null);
+    try {
+      await api.post('/sessions/today/regenerate');
+      await loadSession();
+    } catch (err: any) {
+      const latest = await loadSession();
+      if (!latest || latest.generationState === 'failed') {
+        setError(latest?.generationMessage || err?.response?.data?.error?.message || 'Could not regenerate questions. Try again.');
+      }
+    } finally {
+      setRegenerating(false);
     }
   };
 
@@ -314,15 +352,25 @@ export default function TodaySessionPage() {
   return (
     <div className="min-h-screen bg-brand-background py-8 px-4">
       <div className="mx-auto max-w-3xl">
-        {/* Progress header */}
+        {/* Progress header with regenerate action */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium text-brand-textSecondary">
               Day {session?.userDayNumber} — {typeLabel} section
             </p>
-            <p className="text-sm text-brand-textSecondary">
-              {answeredCount} / {questions.length} reviewed
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-brand-textSecondary">
+                {answeredCount} / {questions.length} reviewed
+              </p>
+              <button
+                onClick={regenerateQuestions}
+                disabled={regenerating || session?.generationState === 'generating'}
+                title="Replace unanswered questions with a fresh set from your current settings. Answered and skipped questions stay."
+                className="text-xs font-medium text-brand-secondary hover:text-brand-primary underline underline-offset-2 disabled:opacity-50 disabled:no-underline"
+              >
+                {regenerating ? 'Regenerating…' : 'Regenerate fresh set'}
+              </button>
+            </div>
           </div>
           <Progress value={answeredCount} max={questions.length || 1} />
         </div>
@@ -337,6 +385,7 @@ export default function TodaySessionPage() {
               <Badge>{typeLabel}</Badge>
               <Badge variant="neutral">{q.difficulty}</Badge>
               {q.isRevision && <Badge variant="neutral">Revision pass</Badge>}
+              {q.status === 'skipped' && <Badge variant="neutral">Skipped</Badge>}
               {q.estimatedTimeSeconds ? <Badge variant="neutral">~{Math.round(q.estimatedTimeSeconds / 60)} min</Badge> : null}
             </div>
             <CardTitle className="text-xl leading-relaxed">{q.question}</CardTitle>
@@ -362,7 +411,14 @@ export default function TodaySessionPage() {
               </select>
             </label>
             {!revealedAnswers[q.id] ? (
-              <Button onClick={revealAnswer} isLoading={revealing}>Show detailed answer</Button>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={revealAnswer} isLoading={revealing}>Show detailed answer</Button>
+                {q.status !== 'answered' && q.status !== 'reviewed' && q.status !== 'skipped' && (
+                  <Button variant="secondary" onClick={skipQuestion} isLoading={skipping}>
+                    Skip question
+                  </Button>
+                )}
+              </div>
             ) : (
               <div>
                 <h3 className="font-semibold text-brand-primary">Interview-ready answer</h3>
@@ -416,9 +472,11 @@ export default function TodaySessionPage() {
                 'w-8 h-8 rounded-full text-xs font-medium transition-colors',
                 item.status === 'answered' || item.status === 'reviewed'
                   ? 'bg-emerald-500 text-white'
-                  : i === currentIndex
-                    ? 'bg-brand-secondary text-white ring-2 ring-brand-secondary/30'
-                    : 'bg-white border border-brand-border text-brand-textSecondary'
+                  : item.status === 'skipped'
+                    ? 'bg-slate-300 text-slate-600 line-through'
+                    : i === currentIndex
+                      ? 'bg-brand-secondary text-white ring-2 ring-brand-secondary/30'
+                      : 'bg-white border border-brand-border text-brand-textSecondary'
               )}
             >
               {i + 1}

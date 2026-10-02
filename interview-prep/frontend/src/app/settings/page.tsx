@@ -46,6 +46,16 @@ const DIFFICULTY_OPTIONS: Array<{
   },
 ];
 
+interface AIStatus {
+  configured: boolean;
+  provider: string;
+  model: string;
+  hasApiKey: boolean;
+  activeProvider: string | null;
+  fallback: { configured: boolean; provider: string; model: string; hasApiKey: boolean };
+  recentRequests?: Array<{ purpose: string; provider: string; model: string; status: string }>;
+}
+
 const COUNT_FIELDS: Array<{
   key: keyof Pick<
     UserPreferences,
@@ -91,8 +101,10 @@ export default function SettingsPage() {
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -101,6 +113,10 @@ export default function SettingsPage() {
       .then((res) => setPrefs(res.data.data?.preferences || null))
       .catch(() => setError('Failed to load preferences'))
       .finally(() => setIsLoading(false));
+    // Provider diagnostics explain a failed regeneration without server logs.
+    api.get<ApiResponse<AIStatus>>('/profile/ai-status')
+      .then((res) => setAiStatus(res.data.data || null))
+      .catch(() => setAiStatus(null));
   }, [isAuthenticated]);
 
   const setDifficulty = (difficulty: string) => {
@@ -113,26 +129,28 @@ export default function SettingsPage() {
     setPrefs({ ...prefs, [key]: value } as UserPreferences);
   };
 
+  const buildPayload = (): Record<string, any> | null => {
+    if (!prefs) return null;
+    const payload: Record<string, any> = { difficulty: prefs.difficulty };
+    for (const { key, min, max } of COUNT_FIELDS) {
+      const raw = (prefs as any)[key];
+      const num = Number(raw);
+      if (Number.isInteger(num)) {
+        payload[key] = Math.min(Math.max(num, min), max);
+      }
+    }
+    return payload;
+  };
+
   const save = async () => {
     if (!prefs) return;
     setIsSaving(true);
     setMessage(null);
     setError(null);
     try {
-      const payload: Record<string, any> = {
-        difficulty: prefs.difficulty,
-      };
-      for (const { key, min, max } of COUNT_FIELDS) {
-        const raw = (prefs as any)[key];
-        const num = Number(raw);
-        if (Number.isInteger(num)) {
-          payload[key] = Math.min(Math.max(num, min), max);
-        }
-      }
-
       const res = await api.put<ApiResponse<{ preferences: UserPreferences }>>(
         '/profile/preferences',
-        payload
+        buildPayload()
       );
       setPrefs(res.data.data?.preferences || prefs);
       setMessage('Saved! Your next generated session will use these settings.');
@@ -140,6 +158,31 @@ export default function SettingsPage() {
       setError(err?.response?.data?.error?.message || 'Failed to save preferences');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const applyToToday = async () => {
+    if (!prefs || isApplying) return;
+    setIsApplying(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await api.put('/profile/preferences', buildPayload());
+      const res = await api.post('/sessions/today/regenerate');
+      const total = res.data?.data?.totalQuestions ?? 0;
+      setMessage(total === 0
+        ? res.data?.data?.generationMessage || 'Saved, but no new questions were generated for today.'
+        : `Saved — today\u2019s session now has ${total} fresh question${total === 1 ? '' : 's'}.`);
+      api.get<ApiResponse<AIStatus>>('/profile/ai-status')
+        .then((r) => setAiStatus(r.data.data || null))
+        .catch(() => {});
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message || err?.response?.data?.message;
+      setError(msg === 'No session for today yet. Generate it first.'
+        ? 'Preferences saved. Today\u2019s session will use them when it is generated.'
+        : msg || 'Preferences may be saved, but regenerating today\u2019s session failed. Try again from the dashboard.');
+    } finally {
+      setIsApplying(false);
     }
   };
 
@@ -254,11 +297,62 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <div className="mt-6 flex justify-end">
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <Button
+            variant="secondary"
+            onClick={applyToToday}
+            disabled={isApplying || isSaving || !prefs}
+            title="Save now and rebuild today's session: answered and skipped questions stay, the rest are replaced with the new counts."
+          >
+            {isApplying ? 'Applying to today…' : 'Save and apply to today'}
+          </Button>
           <Button onClick={save} disabled={isSaving || !prefs}>
             {isSaving ? 'Saving…' : 'Save preferences'}
           </Button>
         </div>
+
+        {aiStatus && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Question generation status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-brand-textSecondary">Provider</dt>
+                  <dd className="font-medium text-brand-primary text-right">
+                    {aiStatus.provider} / {aiStatus.model || 'no model set'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-brand-textSecondary">API key</dt>
+                  <dd className="font-medium text-brand-primary text-right">
+                    {aiStatus.hasApiKey ? 'configured' : 'missing'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-brand-textSecondary">Fallback provider</dt>
+                  <dd className="font-medium text-brand-primary text-right">
+                    {aiStatus.fallback.configured
+                      ? `${aiStatus.fallback.provider} / ${aiStatus.fallback.model}`
+                      : 'not configured'}
+                  </dd>
+                </div>
+                {aiStatus.activeProvider && (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-brand-textSecondary">Currently serving</dt>
+                    <dd className="font-medium text-brand-primary text-right">{aiStatus.activeProvider}</dd>
+                  </div>
+                )}
+              </dl>
+              <p className="mt-3 text-xs text-brand-textSecondary">
+                A fallback provider takes over automatically when the primary is rate-limited,
+                unreachable, or returns unusable output. Set AI_FALLBACK_PROVIDER,
+                AI_FALLBACK_API_KEY and AI_FALLBACK_MODEL in the backend .env to enable one.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

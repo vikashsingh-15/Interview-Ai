@@ -89,8 +89,14 @@ export function aiProviderCandidates():AIProviderCandidate[] {
  * provider when the current one hits a rate limit / quota, is unreachable,
  * errors, or returns output `fn` cannot use (throw to trigger fallback).
  */
-export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCandidate) => Promise<T>):Promise<T> {
-  const candidates = aiProviderCandidates();
+export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCandidate) => Promise<T>,
+  preferredProvider?: string):Promise<T> {
+  const all = aiProviderCandidates();
+  // A caller can pin which provider serves this call, e.g. to give a fallback a
+  // turn when the primary's output was technically valid but unusable.
+  const candidates = preferredProvider && all.some(c=>c.name === preferredProvider)
+    ? [...all].sort((a,b)=>a.name === preferredProvider ? -1 : b.name === preferredProvider ? 1 : 0)
+    : all;
   if(!candidates.length) throw new Error('Set AI_API_KEY and AI_MODEL to enable AI');
   let lastError:unknown;
   for(let i=0;i<candidates.length;i++) {

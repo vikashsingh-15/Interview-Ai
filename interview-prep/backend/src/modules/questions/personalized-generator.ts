@@ -11,7 +11,7 @@ import SkillGraph from '../skill-graph/skill-graph.model';
 import { QuestionHistory } from './question-history.model';
 import { Question } from './question.model';
 import { structuredAIMeta } from '../../common/services/structured-ai';
-import { BadRequestError, AIProviderError, RateLimitError } from '../../common/filters/error-filter';
+import { BadRequestError, AIProviderError, RateLimitError, QuestionRejectedError, ApiError } from '../../common/filters/error-filter';
 
 export const normalizeQuestion = (text: string) => text.normalize('NFKC').toLowerCase()
   .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
@@ -137,9 +137,73 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     !seenTexts.some(t=>nearDuplicate(t,q.question)) &&
     (context.difficulty === 'mixed' || q.difficulty === ({easy:'EASY',medium:'MEDIUM',hard:'HARD',extra_hard:'EXPERT'} as any)[context.difficulty]));
   const accepted:any[] = available.slice(0,count);
+  // Why each candidate was refused. The provider usually answers fine, so this
+  // breakdown is what makes an empty session explainable instead of mysterious.
+  const rejections:Record<string, number> = {};
+  const note = (reason:string) => { rejections[reason] = (rejections[reason] || 0) + 1; };
+  const DIFFICULTY_MAP:any = { easy:'EASY', medium:'MEDIUM', hard:'HARD', extra_hard:'EXPERT' };
+  // Hard checks protect correctness: never invent resume facts, never repeat a
+  // question, never contradict an explicit exclusion. Soft checks are style and
+  // relevance preferences that a usable batch can fail without being wrong.
+  const SOFT_REASONS = ['off_topic','junior_level_wording','difficulty_mismatch'];
+
+  /** Screen one generated question; returns its reasons, or [] when it passes. */
+  const screen = (q:any): string[] => {
+    const reasons:string[] = [];
+    const facts = context.confirmedFacts as any[];
+    // Out-of-range citations are dropped, not fatal: only a question that still
+    // claims resume experience with no usable fact behind it is ungrounded.
+    const factIds = (q.factIds || []).filter((id:number)=>Number.isInteger(id) && id>=0 && id<facts.length);
+    if (q.framing === 'confirmed_experience' && !factIds.length) reasons.push('ungrounded_experience');
+    if (type === 'project' && !factIds.some((id:number)=>facts[id]?.kind === 'project')) reasons.push('no_confirmed_project');
+    const relevantText = normalizeQuestion(q.question+' '+q.detailedAnswer+' '+q.concepts.join(' '));
+    if (type !== 'project' && !matchesQuestionTopic(topic, relevantText) &&
+        !factIds.some((id:number)=>matchesQuestionTopic(topic, JSON.stringify(facts[id] || {}))))
+      reasons.push('off_topic');
+    if (/^(what is|define)\b/i.test(q.question.trim()) && !/entry|intern|graduate|junior/i.test(context.targetLevel || ''))
+      reasons.push('junior_level_wording');
+    if (context.difficulty !== 'mixed' && q.difficulty !== DIFFICULTY_MAP[context.difficulty])
+      reasons.push('difficulty_mismatch');
+    if (context.excludedTopics.some(t=>q.question.toLowerCase().includes(t.toLowerCase()))) reasons.push('excluded_topic');
+    return reasons;
+  };
+
+  /** Persist an accepted question, honouring duplicate and grounding guarantees. */
+  const persist = async (q:any, factIds:number[], servedModel:string, relaxed:boolean) => {
+    if (accepted.length >= count) return;
+    if (seenTexts.concat(accepted.map(a=>a.question)).some(t=>nearDuplicate(t,q.question))) { note('duplicate'); return; }
+    // Semantic comparison is optional and explicit; exact/lexical exclusion always runs.
+    let embedding:number[]|undefined;
+    try { embedding = await questionEmbedding(q.question); } catch { /* lexical checks still protect exact repeats */ }
+    if (embedding && allExposure.some(e=>e.embeddingModel === config.ai.embeddingModel &&
+        cosine(embedding!,e.embedding || []) >= 0.97)) { note('semantic_duplicate'); return; }
+    const normalizedHash = questionHash(q.question);
+    let saved;
+    try {
+      saved = await Question.create({ ...q, factIds:undefined, topic, ownerUserId:userId, normalizedHash, embedding,
+        embeddingModel:embedding ? config.ai.embeddingModel : undefined,
+        questionType:type === 'project' ? 'RESUME_PROJECT' : type === 'system_design' ? 'SYSTEM_DESIGN' : 'CONCEPTUAL',
+        isProjectInterview:type === 'project', isSystemDesign:type === 'system_design',
+        provenance:q.framing === 'confirmed_experience' ? 'RESUME_DERIVED' : 'AI_GENERATED',
+        qualityStatus:'approved', qualityScore:relaxed ? 0.5 : 0.6, promptVersion:'question-v3',
+        generatorModel:servedModel, generatedAt:new Date(),
+        resumeClaimIds:factIds.map(String), sourceId:String(plan._id), tags:['personalized',q.framing],
+        expectedAnswerDepth:'DEEP', interviewPriority:'HIGH', resumeRelevance:factIds.length ? 'HIGH' : 'LOW',
+      });
+    } catch(e:any) {
+      if (e.code !== 11000) throw e;
+      // Never reuse another user's private question after a global unique-hash collision.
+      saved = await Question.findOne({ normalizedHash, ...visibility });
+    }
+    if (!saved) { note('persist_failed'); return; }
+    if (relaxed) note('accepted_relaxed');
+    accepted.push(saved);
+  };
+
   try {
     if (accepted.length < count && config.ai.apiKey) {
-      const meta = await structuredAIMeta({ userId, purpose:'personalized-questions', version:'question-v3',
+      const generate = async (preferredProvider?: string) => structuredAIMeta({ userId,
+        purpose:'personalized-questions', version:'question-v3', preferredProvider,
         schema:generatedBatchSchema, context:{ ...context, count:count-accepted.length,
           existingBankQuestions:bank.map(q=>q.question).slice(0,40) },
         system: `You are a role-agnostic personalized interviewer. The backend plan determines the topic and category.
@@ -154,52 +218,55 @@ Return {"questions":[{"question":"specific, answerable prompt","subtopic":"...",
 "factIds":[0],"framing":"hypothetical|general_knowledge|confirmed_experience"}]}.
 Do not generate executable coding problems here; coding uses a validated curated bank.`,
       });
-      // Record the provider/model that actually served, including fallbacks.
-      const servedModel = meta.model;
-      const result = meta.result;
-      for (const q of result.questions) {
+      // A provider that answers but whose output fails validation is as useless
+      // as one that errors, so every configured provider gets a turn before the
+      // topic is called unavailable.
+      let aiError:any;
+      for (const provider of aiProviderCandidates().map(c=>c.name)) {
         if (accepted.length >= count) break;
-        const relevantText = normalizeQuestion(q.question+' '+q.detailedAnswer+' '+q.concepts.join(' '));
-        if (type !== 'project' && !matchesQuestionTopic(topic, relevantText) && !q.factIds.some(id=>matchesQuestionTopic(topic, JSON.stringify(context.confirmedFacts[id] || {})))) continue;
-        if (q.factIds.some(id=>id>=context.confirmedFacts.length) ||
-            q.framing === 'confirmed_experience' && !q.factIds.length) continue;
-        if (type === 'project' && !q.factIds.some(id=>(context.confirmedFacts[id] as any)?.kind === 'project')) continue;
-        if (/^(what is|define)\b/i.test(q.question.trim()) && !/entry|intern|graduate|junior/i.test(context.targetLevel || '')) continue;
-        if (context.difficulty !== 'mixed' && q.difficulty !== ({easy:'EASY',medium:'MEDIUM',hard:'HARD',extra_hard:'EXPERT'} as any)[context.difficulty]) continue;
-        if (context.excludedTopics.some(t=>q.question.toLowerCase().includes(t.toLowerCase()))) continue;
-        if (seenTexts.concat(accepted.map(a=>a.question)).some(t=>nearDuplicate(t,q.question))) continue;
-        // Semantic comparison is optional and explicit; exact/lexical exclusion always runs.
-        let embedding:number[]|undefined;
-        try { embedding = await questionEmbedding(q.question); } catch { /* lexical checks still protect exact repeats */ }
-        if (embedding && allExposure.some(e=>e.embeddingModel === config.ai.embeddingModel &&
-            cosine(embedding!,e.embedding || []) >= 0.97)) continue;
-        const normalizedHash = questionHash(q.question);
-        let saved;
-        try {
-          saved = await Question.create({ ...q, topic, ownerUserId:userId, normalizedHash, embedding,
-            embeddingModel:embedding ? config.ai.embeddingModel : undefined,
-            questionType:type === 'project' ? 'RESUME_PROJECT' : type === 'system_design' ? 'SYSTEM_DESIGN' : 'CONCEPTUAL',
-            isProjectInterview:type === 'project', isSystemDesign:type === 'system_design',
-            provenance:q.framing === 'confirmed_experience' ? 'RESUME_DERIVED' : 'AI_GENERATED',
-            qualityStatus:'approved', qualityScore:0.6, promptVersion:'question-v3',
-            generatorModel:servedModel, generatedAt:new Date(),
-            resumeClaimIds:q.factIds.map(String), sourceId:String(plan._id), tags:['personalized',q.framing],
-            expectedAnswerDepth:'DEEP', interviewPriority:'HIGH', resumeRelevance:q.factIds.length ? 'HIGH' : 'LOW',
-          });
-        } catch(e:any) {
-          if (e.code !== 11000) throw e;
-          // Never reuse another user's private question after a global unique-hash collision.
-          saved = await Question.findOne({ normalizedHash, ...visibility });
+        let meta;
+        try { meta = await generate(provider); }
+        catch (error) {
+          // withAIFallback already walks every provider, so reaching here means
+          // the whole chain is down; stop and report the provider failure.
+          aiError = error;
+          break;
         }
-        if (saved) accepted.push(saved);
+        if (meta.provider !== config.ai.provider) {
+          logger.info('Fallback AI provider served question generation', { topic,
+            primary:`${config.ai.provider}/${config.ai.model}`, served:`${meta.provider}/${meta.model}` });
+        }
+        const screened = meta.result.questions.map(q=>({ q, reasons:screen(q) }));
+        // Hard-passing questions first, then ones that missed only a style
+        // preference, so a usable batch is never discarded wholesale.
+        const ordered = [
+          ...screened.filter(s=>!s.reasons.length),
+          ...screened.filter(s=>s.reasons.length && s.reasons.every(r=>SOFT_REASONS.includes(r))),
+          ...screened.filter(s=>s.reasons.some(r=>!SOFT_REASONS.includes(r))),
+        ];
+        const facts = context.confirmedFacts as any[];
+        for (const { q, reasons } of ordered) {
+          if (accepted.length >= count) break;
+          const hard = reasons.filter(r=>!SOFT_REASONS.includes(r));
+          if (hard.length) { hard.forEach(note); continue; }
+          const soft = reasons.filter(r=>SOFT_REASONS.includes(r));
+          soft.forEach(note);
+          const factIds = (q.factIds||[]).filter((id:number)=>Number.isInteger(id) && id>=0 && id<facts.length);
+          await persist(q, factIds, meta.model, soft.length>0);
+        }
       }
-    }
-    if (!accepted.length && config.ai.apiKey) {
-      logger.warn('AI questions rejected by validation', { provider:config.ai.provider, model:config.ai.model,
-        fallbackProvider:hasFallbackAI() ? config.ai.fallback.provider : undefined,
-        fallbackModel:hasFallbackAI() ? config.ai.fallback.model : undefined,
-        topic, planId:String(plan._id) });
-      throw new Error('No generated questions passed relevance, grounding, difficulty and duplicate checks');
+      if (!accepted.length) {
+        if (aiError) throw aiError;
+        const reasons = Object.entries(rejections).map(([reason,n])=>`${reason} (${n})`).join(', ');
+        logger.warn('AI questions rejected by validation', { provider:config.ai.provider, model:config.ai.model,
+          fallbackProvider:hasFallbackAI() ? config.ai.fallback.provider : undefined,
+          fallbackModel:hasFallbackAI() ? config.ai.fallback.model : undefined,
+          topic, planId:String(plan._id), rejections });
+        // The provider answered; the batch simply did not clear our checks.
+        // Blaming the provider here is what made this failure unexplainable.
+        throw new QuestionRejectedError(
+          `The AI provider answered, but none of its questions passed our checks for "${topic}" (${reasons || 'no usable output'}). Nothing was repeated or invented. Press Regenerate to try again, or widen the topic or set difficulty to Mixed in Settings.`, rejections);
+      }
     }
     await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:accepted.length ? 'completed' : 'exhausted' });
   } catch(error) {
@@ -217,6 +284,9 @@ Do not generate executable coding problems here; coding uses a validated curated
       requestId: providerError?.request_id || providerError?.requestId,
     });
     if (!accepted.length) {
+      // Already-classified failures keep their own accurate message; only an
+      // unclassified provider error is reported as provider unavailability.
+      if (error instanceof ApiError) throw error;
       if (providerError?.status === 429 && /free-models-per-day/i.test(providerError?.message || '')) {
         throw new RateLimitError('OpenRouter free-model daily limit reached. Wait for the quota to reset or use another AI provider/model with available quota.');
       }
@@ -240,4 +310,10 @@ export async function reserveQuestion(userId:string, sessionId:mongoose.Types.Ob
     if (error.code === 11000) return false;
     throw error;
   }
+}
+
+/** Question ids already exposed to the user across all sessions. */
+export async function exposedQuestionIds(userId:string):Promise<Set<string>> {
+  const rows = await QuestionExposure.find({ userId }).select('questionId').lean();
+  return new Set(rows.map(r=>String(r.questionId)));
 }

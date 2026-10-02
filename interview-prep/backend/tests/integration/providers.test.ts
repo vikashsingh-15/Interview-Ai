@@ -66,14 +66,71 @@ test('real provider adapter validates and persists personalized questions, witho
 test('same generated text is rejected after assignment and never padded with templates',async()=>{
   mockCreate.mockResolvedValue({choices:[{message:{content:JSON.stringify({questions:[candidate]})},finish_reason:'stop'}]});
   // Every fresh candidate is a duplicate of the reserved one, so generation
-  // reports unavailability instead of padding the session with repeats.
-  await expect(generatePersonalizedQuestions(userId,'React',1)).rejects.toThrow('Question generation unavailable');
+  // reports the real cause (duplicates) instead of padding the session with
+  // repeats or blaming the provider, which answered successfully.
+  await expect(generatePersonalizedQuestions(userId,'React',1)).rejects.toThrow('none of its questions passed our checks');
   expect(await QuestionExposure.countDocuments({userId})).toBe(1);
+});
+test('a batch that misses only style checks is still used, at a lower quality score',async()=>{
+  // "What is ..." wording and a difficulty mismatch are preferences, not
+  // correctness failures: the question is grounded and not a repeat, so it is
+  // kept rather than discarding the whole batch and the user\u2019s session.
+  const juniorWording={
+    question:'What is a Java virtual machine and how does it decide where to allocate an object?',
+    subtopic:'Runtime',concepts:['java','jvm'],difficulty:'EASY',archetype:'CONCEPTUAL',
+    detailedAnswer:'The JVM loads bytecode and verifies it before execution, then manages a heap that is split into generations so short-lived objects can be collected cheaply. Allocation is pointer-bump within a region, and a reference is resolved either directly from a handle or through an object reference, which is what keeps the collector able to trace live objects without scanning the whole heap.',
+    estimatedAnswerTimeSeconds:180,factIds:[],framing:'general_knowledge',
+  };
+  mockCreate.mockResolvedValue({choices:[{message:{content:JSON.stringify({questions:[juniorWording]})},finish_reason:'stop'}],
+    usage:{total_tokens:100}});
+  const generated=await generatePersonalizedQuestions(userId,'Java',1);
+  expect(generated).toHaveLength(1);
+  expect(generated[0].qualityScore).toBeLessThan(0.6);
+  // Grounding is still enforced: the question is not marked resume-derived.
+  expect(generated[0].provenance).toBe('AI_GENERATED');
+});
+test('an ungrounded resume-experience claim is refused even as a last resort',async()=>{
+  // Hard checks are never relaxed: claiming the candidate did something with no
+  // confirmed fact behind it is a correctness failure, not a style preference.
+  const fabricated={
+    question:'Describe how you scaled the checkout service you built at your previous company to ten million daily users.',
+    subtopic:'Scaling',concepts:['java'],difficulty:'MEDIUM',archetype:'PRODUCTION_SCENARIO',
+    detailedAnswer:'Start by separating read and write traffic, then introduce a cache in front of the hot path and shard the primary store once the working set stops fitting. Introduce a queue to absorb write bursts, and add backpressure so downstream consumers degrade instead of collapsing. Track tail latency rather than averages, because checkout regressions show up in the slowest percentiles first and are usually caused by lock contention.',
+    estimatedAnswerTimeSeconds:180,factIds:[99],framing:'confirmed_experience',
+  };
+  mockCreate.mockResolvedValue({choices:[{message:{content:JSON.stringify({questions:[fabricated]})},finish_reason:'stop'}],
+    usage:{total_tokens:100}});
+  await expect(generatePersonalizedQuestions(userId,'Java',1)).rejects.toThrow('ungrounded_experience');
+  expect(await Question.countDocuments({ provenance:'RESUME_DERIVED', ownerUserId:userId })).toBe(0);
 });
 test('malformed AI output records failure and is not shown to the user',async()=>{
   mockCreate.mockResolvedValue({choices:[{message:{content:'not JSON'},finish_reason:'stop'}]});
   await expect(generatePersonalizedQuestions(userId,'Security',1)).rejects.toThrow('Question generation unavailable');
   expect(await AIRequest.countDocuments({userId,status:'failed'})).toBeGreaterThan(0);
+});
+test('the fallback provider is tried when the primary output is unusable',async()=>{
+  config.ai.fallback={provider:'gemini',apiKey:'fallback-fixture-key',model:'gemini-fallback-model',customBaseURL:''};
+  // The primary answers, but every question is a repeat of what the user has
+  // already seen, so validation rejects the batch and the fallback gets a turn.
+  const repeated={
+    question:'Imagine a React interface with overlapping network requests. How would you prevent a stale response from replacing newer state?',
+    subtopic:'Request lifecycle',concepts:['React','state'],difficulty:'MEDIUM',archetype:'DEBUGGING',
+    detailedAnswer:'Associate each request with a generation identifier that increments on every fetch. Apply a response only if its generation matches the latest request, because older responses must never overwrite newer state. Abort obsolete requests with an abort controller where supported, and keep loading, error and data transitions independent so a failed retry cannot blank a rendered list. In large tables, combine this with cancellation on unmount and a small cache keyed by query parameters to avoid redundant fetches.',
+    estimatedAnswerTimeSeconds:180,factIds:[0],framing:'hypothetical',
+  };
+  const usable={
+    question:'A JVM garbage-collection pause lengthens during a traffic spike. Walk through how you would confirm the cause and reduce it without raising latency budgets.',
+    subtopic:'Garbage collection',concepts:['java','jvm'],difficulty:'MEDIUM',archetype:'DEBUGGING',
+    detailedAnswer:'Correlate pause duration with allocation rate and heap occupancy before changing anything, because a pause caused by promotion failures needs a different fix from one caused by a full collection of a badly sized heap. Reduce allocation on the hot path first by reusing buffers, then confirm whether the collector choice still matches the object lifetimes. Raising the heap hides the symptom but lengthens every full collection, so validate the change against p99 latency rather than throughput alone.',
+    estimatedAnswerTimeSeconds:180,factIds:[],framing:'general_knowledge',
+  };
+  mockCreate.mockResolvedValueOnce({choices:[{message:{content:JSON.stringify({questions:[repeated]})},finish_reason:'stop'}],
+      usage:{total_tokens:100}})
+    .mockResolvedValueOnce({choices:[{message:{content:JSON.stringify({questions:[usable]})},finish_reason:'stop'}],
+      usage:{total_tokens:100}});
+  const generated=await generatePersonalizedQuestions(userId,'Java',1);
+  expect(generated).toHaveLength(1);
+  expect(generated[0].generatorModel).toBe('gemini-fallback-model');
 });
 test('per-user AI budget is enforced atomically',async()=>{
   const previous=config.ai.dailyRequestLimit;config.ai.dailyRequestLimit=1;

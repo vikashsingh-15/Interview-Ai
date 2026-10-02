@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Progress } from '@/components/ui/Progress';
 import api from '@/lib/api';
@@ -17,6 +18,29 @@ export default function DashboardPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenNote, setRegenNote] = useState<string | null>(null);
+
+  const regenerateToday = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    setRegenNote(null);
+    try {
+      const res = await api.post('/sessions/today/regenerate');
+      const sessionRes = await api.get('/sessions/today');
+      setSession(sessionRes.data.data);
+      setRegenNote(
+        (res.data?.data?.totalQuestions ?? 0) === 0
+          ? res.data?.data?.generationMessage || 'No new questions were generated.'
+          : `Fresh set ready — ${res.data.data.totalQuestions} question${res.data.data.totalQuestions === 1 ? '' : 's'} for today.`,
+      );
+    } catch (error: any) {
+      setRegenNote(error?.response?.data?.error?.message || error?.response?.data?.message
+        || 'Could not regenerate. Try again in a moment.');
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   useEffect(() => {
     if (authLoading) return;
@@ -70,16 +94,26 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            {session?.userDayNumber && (
-              <Link href="/sessions/today">
-                <button className="inline-flex items-center px-6 py-3 text-base font-medium rounded-lg bg-brand-secondary text-white hover:bg-brand-secondary/90 transition-colors shadow-sm">
-                  Continue Day {session.userDayNumber}
-                  <svg className="ml-2 w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                  </svg>
-                </button>
-              </Link>
-            )}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="secondary"
+                onClick={regenerateToday}
+                disabled={regenerating}
+                title="Replace today's unanswered questions with a fresh set built from your current settings. Answered and skipped questions are kept."
+              >
+                {regenerating ? 'Generating fresh set…' : 'Generate fresh questions'}
+              </Button>
+              {session?.userDayNumber && (
+                <Link href="/sessions/today">
+                  <button className="inline-flex items-center px-6 py-3 text-base font-medium rounded-lg bg-brand-secondary text-white hover:bg-brand-secondary/90 transition-colors shadow-sm">
+                    Continue Day {session.userDayNumber}
+                    <svg className="ml-2 w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                  </button>
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -108,6 +142,22 @@ export default function DashboardPage() {
                 max={session?.totalQuestions ?? 1}
                 className="mt-4"
               />
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <button
+                  onClick={regenerateToday}
+                  disabled={regenerating}
+                  title="Replace unanswered questions with a fresh set from your current settings. Answered and skipped questions stay."
+                  className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg border border-brand-border text-brand-text hover:bg-brand-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {regenerating ? 'Regenerating…' : 'Regenerate fresh set'}
+                </button>
+                <Link href="/settings" className="text-xs text-brand-textSecondary hover:text-brand-primary underline underline-offset-2">
+                  Change question count
+                </Link>
+              </div>
+              {regenNote && (
+                <p className="mt-2 text-xs text-brand-textSecondary break-words">{regenNote}</p>
+              )}
             </CardContent>
           </Card>
 

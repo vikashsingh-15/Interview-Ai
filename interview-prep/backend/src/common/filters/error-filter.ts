@@ -91,6 +91,20 @@ export class AIProviderError extends ApiError {
   }
 }
 
+/**
+ * The AI provider responded successfully, but every generated question failed
+ * our quality checks. This is a content problem, not a provider outage, so it
+ * gets its own code and message instead of blaming the provider configuration.
+ */
+export class QuestionRejectedError extends ApiError {
+  constructor(
+    message: string,
+    public rejections?: Record<string, number>
+  ) {
+    super(422, message, 'QUESTION_REJECTED');
+  }
+}
+
 // Error handling middleware
 export function errorHandler(
   err: Error,

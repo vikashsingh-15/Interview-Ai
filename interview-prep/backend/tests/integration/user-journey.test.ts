@@ -35,7 +35,7 @@ test('account data deletion removes only owned GridFS files and chunks',async()=
   expect(await resumeStorage.get(otherKey)).toEqual(bytes);
   await resumeStorage.delete(otherKey);
 });
-async function onboard(agent:any,email:string,skill:string) {
+async function onboard(agent:any,email:string,skill:string,projectName:string) {
   const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
   agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
   const upload=await agent.post('/api/resume/upload').attach('file',await docxResume('Candidate resume with '+skill+' professional experience and real contact details.'),{filename:'resume.docx',contentType:mime});
@@ -46,7 +46,7 @@ async function onboard(agent:any,email:string,skill:string) {
   expect(extracted.body.data.skills.every((s:any)=>!s.isConfirmed)).toBe(true);
   expect((await agent.put('/api/profile/review').send({
     currentRole:'Professional',skills:extracted.body.data.skills.map((s:any)=>({...s,isConfirmed:true,isRemoved:false})),
-    experience:[],projects:[],
+    experience:[],projects:[{name:projectName,description:'Built a '+projectName+' during onboarding test.',isConfirmed:true,isRemoved:false}],
   })).status).toBe(200);
   expect((await agent.post('/api/profile/onboarding').send({
     targetRole:'',targetLevel:'Senior',actualExperienceMonths:36,targetCompanies:[],
@@ -63,8 +63,20 @@ afterAll(async()=>{
   await mongoose.disconnect();if(db)await db.stop();
 });
 test('Google-session user, genuine upload, review and generic-role onboarding',async()=>{
-  const result=await onboard(a,'a@example.test','Python');userId=result.userId;versionId=result.version;
-  await onboard(b,'b@example.test','React');
+  const result=await onboard(a,'a@example.test','Python','Payments Platform');userId=result.userId;versionId=result.version;
+  await onboard(b,'b@example.test','React','Chat Application');
+  // Confirmed resume projects materialize as Project records, isolated per user.
+  const projectsA=(await a.get('/api/projects')).body.data;
+  const projectsB=(await b.get('/api/projects')).body.data;
+  expect(projectsA.map((p:any)=>p.name)).toEqual(['Payments Platform']);
+  expect(projectsB.map((p:any)=>p.name)).toEqual(['Chat Application']);
+  expect(projectsA[0].isVerifiedFromResume).toBe(true);
+  // Re-running onboarding updates in place instead of duplicating.
+  expect((await a.post('/api/profile/onboarding').send({
+    targetRole:'',targetLevel:'Senior',actualExperienceMonths:36,targetCompanies:[],
+    difficulty:'medium',dailyPlan:[{title:'Skills',topic:'Python',type:'technical',count:1}],
+  })).status).toBe(200);
+  expect((await a.get('/api/projects')).body.data).toHaveLength(1);
   expect((await a.get('/api/resume/files/'+versionId)).status).toBe(200);
   expect((await b.get('/api/resume/files/'+versionId)).status).toBe(404);
   expect((await ResumeVersion.findById(versionId))?.storageProvider).toBe('gridfs');
@@ -123,6 +135,70 @@ test('fresh day never repeats an assigned question even if the topic/concept rep
   expect(day3.status).toBe(200);
   expect(await QuestionExposure.countDocuments({userId})).toBe(2);
 });
+test('skip resolves a question and regenerate replaces only pending questions',async()=>{
+  // Fresh user with a seeded bank so refill has fresh questions to draw from.
+  const agent=request.agent(app);
+  const {userId:cid}=await onboard(agent,'c@example.test','Go','Inventory Service');
+  const goScenarios=[
+    'When a Go channel buffer fills while producers outpace consumers, how should the pipeline shed load without deadlocking?',
+    'How would you detect and fix a goroutine leak in a Go service that spawns workers per request?',
+    'In Go, why can an unbuffered channel cause a producer and consumer to deadlock, and how do you break the cycle?',
+    'How would you design graceful shutdown for a Go worker pool processing in-flight jobs from a channel?',
+    'When should a Go service prefer a mutex over channels for shared rate-counter state across goroutines?',
+    'How could you bound memory usage in a Go fan-out pipeline where one slow consumer stalls every shard?',
+    'In Go, how would you propagate cancellation from an HTTP handler cancel into a nested worker hierarchy?',
+    'How would you make channel-based retries in Go idempotent when the downstream job may already have run?',
+  ];
+  for(const q of goScenarios){
+    await Question.create({ownerUserId:cid,question:q,
+      topic:'Go',subtopic:'Concurrency',concepts:['channels'],difficulty:'MEDIUM',questionType:'CONCEPTUAL',
+      archetype:'CONCEPTUAL',provenance:'USER_CREATED',qualityStatus:'approved'});
+  }
+  await agent.post('/api/sessions/generate');
+  let today=await agent.get('/api/sessions/today');
+  expect(today.body.data.totalQuestions).toBe(1); // plan count is 1
+  const first=today.body.data.sections[0].questions[0];
+
+  // Skip the only question; it counts as resolved with no score impact.
+  expect((await agent.post('/api/sessions/'+today.body.data.sessionId+'/questions/'+first.id+'/skip')).status).toBe(200);
+  today=await agent.get('/api/sessions/today');
+  expect(today.body.data.sections[0].questions[0].status).toBe('skipped');
+  expect(today.body.data.completedQuestions).toBe(1);
+  expect(today.body.data.averageScore).toBe(0);
+  // Double-skip is rejected.
+  expect((await agent.post('/api/sessions/'+today.body.data.sessionId+'/questions/'+first.id+'/skip')).status).toBe(409);
+
+  // Raise the daily count to 3 and regenerate: the skipped question stays,
+  // and the section refills with fresh questions from the bank.
+  expect((await agent.put('/api/profile/preferences').send({dailyQuestions:3})).status).toBe(200);
+  expect((await agent.post('/api/sessions/today/regenerate')).status).toBe(200);
+  today=await agent.get('/api/sessions/today');
+  expect(today.body.data.sections.find((s:any)=>s.type==='technical').totalQuestions).toBe(3);
+  expect(today.body.data.sections.find((s:any)=>s.type==='technical').questions.some((x:any)=>x.id===first.id && x.status==='skipped')).toBe(true);
+  const answeredTarget=today.body.data.sections.find((s:any)=>s.type==='technical').questions.find((x:any)=>x.status==='pending');
+
+  // Answer one question so the next regenerate must preserve it.
+  const answerRes=await agent.post('/api/sessions/'+today.body.data.sessionId+'/answers/'+answeredTarget.id).send({answer:'Channels connect goroutines so the worker pool drains jobs without race conditions.'});
+  expect(answerRes.status).toBe(200);
+
+  // Regenerate again: only the remaining pending question is replaced.
+  expect((await agent.post('/api/sessions/today/regenerate')).status).toBe(200);
+  today=await agent.get('/api/sessions/today');
+  const section=today.body.data.sections.find((s:any)=>s.type==='technical');
+  const statuses=section.questions.map((x:any)=>x.status);
+  expect(statuses.filter((s:string)=>s==='answered')).toHaveLength(1);
+  expect(statuses.filter((s:string)=>s==='skipped')).toHaveLength(1);
+  expect(statuses.filter((s:string)=>s==='pending')).toHaveLength(1);
+  expect(today.body.data.completedQuestions).toBe(2); // answered + skipped
+  expect(today.body.data.averageScore).toBeGreaterThan(0);
+  // No duplicate exposure rows: fresh questions were never served before.
+  const exposed=await QuestionExposure.find({userId:cid}).lean();
+  const hashes=exposed.map(e=>e.normalizedHash);
+  expect(new Set(hashes).size).toBe(hashes.length);
+  // Cross-user guard: another user cannot skip this user's question.
+  expect((await b.post('/api/sessions/'+today.body.data.sessionId+'/questions/'+answeredTarget.id+'/skip')).status).toBe(404);
+});
+
 test('sessions expire, bearer tokens cannot authenticate, and logout revokes the cookie',async()=>{
   const token=await createSession(userId);
   expect((await request(app).get('/api/auth/me').set('Authorization','Bearer '+token)).status).toBe(401);

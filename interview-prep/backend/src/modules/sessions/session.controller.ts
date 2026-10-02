@@ -209,6 +209,28 @@ router.post('/:sessionId/questions/:questionId/review', authenticate,
     res.json({ success:true, data:{ completedQuestions } });
   }));
 
+// Skip a question: resolved without answering; excluded from scores.
+router.post('/:sessionId/questions/:questionId/skip', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const result = await sessionService.skipQuestion(req.params.sessionId, req.params.questionId, req.user!.id);
+    res.json({ success:true, data:result, message:'Question skipped' });
+  }));
+
+// Replace today's pending questions with a fresh set from current preferences.
+router.post('/today/regenerate', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const session = await sessionService.regenerateTodaySession(req.user!.id, new Date(req.body?.date || Date.now()));
+    res.json({
+      success:true,
+      data:{
+        sessionId: session._id, status: session.status,
+        generationState: session.generationState, generationMessage: session.generationMessage,
+        totalQuestions: session.totalQuestions, completedQuestions: session.completedQuestions,
+      },
+      message:'Fresh questions generated',
+    });
+  }));
+
 // Submit answer
 router.post(
   '/:sessionId/answers/:questionId',
