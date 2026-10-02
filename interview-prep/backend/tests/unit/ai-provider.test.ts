@@ -10,6 +10,7 @@ beforeEach(()=>{
 });
 test.each([
   ['openrouter','https://openrouter.ai/api/v1'],
+  ['tokenrouter','https://api.tokenrouter.com/v1'],
   ['gemini','https://generativelanguage.googleapis.com/v1beta/openai/'],
   ['openai','https://api.openai.com/v1'],
 ])('%s selects the correct endpoint', (provider,url)=>{

@@ -280,7 +280,7 @@ export const calendarService = {
 };
 
 /** Recompute record totals from the entries list. */
-function recomputeTotals(record: IDailyRecordDocument): void {
+export function recomputeTotals(record: IDailyRecordDocument): void {
   const totals = {
     questions: 0,
     answered: 0,

@@ -6,6 +6,7 @@ import { asyncHandler, BadRequestError, NotFoundError } from '../../common/filte
 import Resume, { ResumeVersion } from '../resume/resume.model';
 import ResumeProfile from '../resume/resume-profile.model';
 import InterviewProfile from './interview-profile.model';
+import { buildDailyPlan, planTotal } from './daily-plan';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { resumeService } from '../resume/resume.service';
 import { extractedResumeSchema, skillEntrySchema, experienceEntrySchema, projectEntrySchema } from '../resume/resume-parser';
@@ -25,7 +26,7 @@ export const reviewSchema = z.object({
 export const planSectionSchema = z.object({
   title: z.string().min(1).max(100), topic: z.string().min(1).max(100),
   type: z.enum(['technical','system_design','coding','project','behavioral','custom']),
-  count: z.number().int().min(0).max(20),
+  count: z.number().int().min(0).max(50),
 });
 const onboardingSchema = z.object({
   targetRole: z.string().max(150).default(''), targetLevel: z.string().max(100).default(''),
@@ -66,12 +67,24 @@ router.post('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) =
   if (!facts.userModified) throw new BadRequestError('Review the extracted facts first');
   if (!profile.confirmedSkills.length && !profile.confirmedProjects.length && !profile.confirmedExperience.length)
     throw new BadRequestError('Confirm at least one skill, project or work experience');
-  const dailyPlan = data.dailyPlan || [{
-    title: 'Professional practice', type: 'technical', count: 5,
-    topic: data.focusTopics[0] || profile.confirmedSkills[0] || facts.currentRole || 'Professional experience',
-  }];
-  if (dailyPlan.reduce((n: number, s: any) => n + s.count, 0) < 1 ||
-      dailyPlan.reduce((n: number, s: any) => n + s.count, 0) > 50)
+  // The plan always mirrors all four per-section settings, so every slider has
+// a section to act on rather than only the first one planned at onboarding.
+  const dailyPlan = data.dailyPlan?.length ? data.dailyPlan : buildDailyPlan({
+    preferences: {
+      dailyQuestions: profile.preferences?.dailyQuestions ?? 5,
+      codingCount: profile.preferences?.codingCount ?? 0,
+      systemDesignCount: profile.preferences?.systemDesignCount ?? 0,
+      projectQuestions: profile.preferences?.projectQuestions ?? 0,
+      codingLanguages: data.codingLanguages,
+      focusTopics: data.focusTopics,
+      excludedTopics: data.excludedTopics,
+      systemDesignFocus: profile.preferences?.systemDesignFocus,
+    },
+    confirmedSkills: profile.confirmedSkills,
+    confirmedProjects: profile.confirmedProjects,
+    currentRole: facts.currentRole,
+  });
+  if (planTotal(dailyPlan) < 1 || planTotal(dailyPlan) > 50)
     throw new BadRequestError('Choose between 1 and 50 fresh questions per day');
   Object.assign(profile, {
     targetRole: data.targetRole.trim() || facts.currentRole || '',
@@ -91,6 +104,7 @@ router.post('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) =
     codingCount: dailyPlan.filter(s => s.type === 'coding').reduce((n,s) => n+s.count,0),
     systemDesignCount: dailyPlan.filter(s => s.type === 'system_design').reduce((n,s) => n+s.count,0),
     projectQuestions: dailyPlan.filter(s => s.type === 'project').reduce((n,s) => n+s.count,0),
+    systemDesignFocus: profile.preferences?.systemDesignFocus || [],
   });
   await profile.save();
   await SkillGraph.updateOne({ userId: new mongoose.Types.ObjectId(req.user!.id) },

@@ -13,6 +13,8 @@ const endpoints:Record<string,string> = {
   openrouter:'https://openrouter.ai/api/v1',
   gemini:'https://generativelanguage.googleapis.com/v1beta/openai/',
   openai:'https://api.openai.com/v1',
+  // OpenAI-compatible gateways that are not one of the named providers above.
+  tokenrouter:'https://api.tokenrouter.com/v1',
 };
 
 // Cache the last serving provider when a fallback actually took over, so the
@@ -33,7 +35,8 @@ function providerBaseURL(provider: string):string {
     if(url.protocol !== 'https:' || url.username || url.password) throw new Error('Custom AI_BASE_URL must be HTTPS without credentials');
     return url.toString();
   }
-  if(!endpoints[provider]) throw new Error('AI_PROVIDER must be openrouter, gemini, openai or custom');
+  if(!endpoints[provider]) throw new Error(
+    'AI_PROVIDER must be openrouter, gemini, openai, tokenrouter or custom; got "'+provider+'"');
   return endpoints[provider];
 }
 

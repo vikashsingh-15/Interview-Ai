@@ -155,7 +155,13 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     // claims resume experience with no usable fact behind it is ungrounded.
     const factIds = (q.factIds || []).filter((id:number)=>Number.isInteger(id) && id>=0 && id<facts.length);
     if (q.framing === 'confirmed_experience' && !factIds.length) reasons.push('ungrounded_experience');
-    if (type === 'project' && !factIds.some((id:number)=>facts[id]?.kind === 'project')) reasons.push('no_confirmed_project');
+    // A project question must cite a confirmed project, but only when one exists.
+    // With no confirmed project the question is reframed as a hypothetical
+    // portfolio prompt on the section's topic rather than a resume claim, so the
+    // user's chosen count is still honoured without inventing their history.
+    const hasProjectFacts = facts.some((f:any)=>f?.kind === 'project');
+    if (type === 'project' && hasProjectFacts && !factIds.some((id:number)=>facts[id]?.kind === 'project'))
+      reasons.push('no_confirmed_project');
     const relevantText = normalizeQuestion(q.question+' '+q.detailedAnswer+' '+q.concepts.join(' '));
     if (type !== 'project' && !matchesQuestionTopic(topic, relevantText) &&
         !factIds.some((id:number)=>matchesQuestionTopic(topic, JSON.stringify(facts[id] || {}))))

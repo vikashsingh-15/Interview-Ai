@@ -3,6 +3,7 @@ import { parseResumeBuffer, extractResumeText, extractedResumeSchema } from '../
 import * as structuredAiModule from '../../src/common/services/structured-ai';
 import config from '../../src/config';
 import { docxResume, pdfResume } from '../helpers/resume-fixtures';
+import { buildDailyPlan, planTotal } from '../../src/modules/profile/daily-plan';
 
 describe('resume extraction and question identity',()=>{
   test('fallback practice category does not require its literal label in the answer',()=>{
@@ -77,6 +78,57 @@ describe('resume extraction and question identity',()=>{
     expect(parsed.experience.map((e)=>e.company)).toEqual(['Acme']);
     expect(parsed.projects.map((p)=>p.description)).toEqual(['d']);
     expect(parsed.certifications).toEqual([]);
+  });
+  test('every configured section produces a plan section, not just the first',()=>{
+    // Regression: the sync used to redistribute counts only among sections that
+    // already existed, so three of the four settings did nothing.
+    const plan=buildDailyPlan({
+      preferences:{dailyQuestions:10,codingCount:2,systemDesignCount:5,projectQuestions:5,systemDesignFocus:[]},
+      confirmedSkills:['Java','JavaScript','TypeScript','Python'],
+    });
+    const byType=(t:string)=>plan.filter(s=>s.type===t).reduce((n,s)=>n+s.count,0);
+    expect(byType('technical')).toBe(10);
+    expect(byType('coding')).toBe(2);
+    expect(byType('system_design')).toBe(5);
+    expect(byType('project')).toBe(5);
+    expect(planTotal(plan)).toBe(22);
+  });
+  test('technical questions spread across confirmed skills instead of stacking one topic',()=>{
+    const plan=buildDailyPlan({preferences:{dailyQuestions:10,codingCount:0,systemDesignCount:0,projectQuestions:0},
+      confirmedSkills:['Java','JavaScript','TypeScript','Python','Node.js']});
+    const topics=new Set(plan.filter(s=>s.type==='technical').map(s=>s.topic));
+    expect(topics.size).toBeGreaterThan(1);
+    expect(plan.filter(s=>s.type==='technical').reduce((n,s)=>n+s.count,0)).toBe(10);
+  });
+  test('a zeroed setting produces no section at all',()=>{
+    const plan=buildDailyPlan({preferences:{dailyQuestions:4,codingCount:1,systemDesignCount:0,projectQuestions:0},
+      confirmedSkills:['Java'],confirmedProjects:['Payments API']});
+    expect(plan.some(s=>s.type==='system_design')).toBe(false);
+    expect(plan.some(s=>s.type==='project')).toBe(false);
+    expect(plan.some(s=>s.type==='coding')).toBe(true);
+  });
+  test('project questions fall back to a portfolio section when none are confirmed',()=>{
+    // Honouring the slider matters more than a resume-specific framing that the
+    // data cannot support; the generator keeps these hypothetical.
+    const plan=buildDailyPlan({preferences:{dailyQuestions:0,codingCount:0,systemDesignCount:0,projectQuestions:3},
+      confirmedSkills:['Java'],confirmedProjects:[]});
+    expect(plan.filter(s=>s.type==='project')).toHaveLength(1);
+    expect(plan[0].count).toBe(3);
+  });
+  test('confirmed projects get their own sections',()=>{
+    const plan=buildDailyPlan({preferences:{dailyQuestions:0,codingCount:0,systemDesignCount:0,projectQuestions:5},
+      confirmedSkills:['Java'],confirmedProjects:['Payments API','Search Platform']});
+    expect(plan.filter(s=>s.type==='project').map(s=>s.topic).sort())
+      .toEqual(['Payments API','Search Platform']);
+  });
+  test('excluded topics never appear in the plan',()=>{
+    const plan=buildDailyPlan({preferences:{dailyQuestions:4,codingCount:0,systemDesignCount:0,projectQuestions:0,
+      focusTopics:['Java','Rust'],excludedTopics:['Java']},confirmedSkills:['Java','Python']});
+    expect(plan.map(s=>s.topic)).not.toContain('Java');
+  });
+  test('all settings at zero yields an empty plan rather than throwing',()=>{
+    expect(buildDailyPlan({preferences:{dailyQuestions:0,codingCount:0,systemDesignCount:0,projectQuestions:0},
+      confirmedSkills:['Java']})).toEqual([]);
   });
   test('AI failure falls back to local extraction instead of failing the upload',async()=>{
     const structuredAISpy=jest.spyOn(structuredAiModule,'structuredAI')

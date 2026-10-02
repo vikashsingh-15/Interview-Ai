@@ -14,6 +14,8 @@ import { ResumeVersion } from '../../src/modules/resume/resume.model';
 import Resume from '../../src/modules/resume/resume.model';
 import { resumeStorage } from '../../src/common/services/resume-storage';
 import { deleteUserData } from '../../src/modules/auth/user-data.service';
+import DailyRecord from '../../src/modules/calendar/daily-record.model';
+import CodingProblem from '../../src/modules/coding/coding-problem.model';
 
 jest.setTimeout(120000);
 let db:MongoMemoryServer;
@@ -197,6 +199,98 @@ test('skip resolves a question and regenerate replaces only pending questions',a
   expect(new Set(hashes).size).toBe(hashes.length);
   // Cross-user guard: another user cannot skip this user's question.
   expect((await b.post('/api/sessions/'+today.body.data.sessionId+'/questions/'+answeredTarget.id+'/skip')).status).toBe(404);
+});
+
+test('all four configured sections generate, and regenerated questions reach the calendar',async()=>{
+  // Regression: only the first configured section used to be planned, so coding,
+  // system design and project settings were silently ignored.
+  const agent=request.agent(app);
+  const {userId:tid}=await onboard(agent,'d@example.test','Rust','Ledger Service');
+  // Seed bank questions per section type so no AI is required in tests. These
+  // must be genuinely distinct: near-duplicate wording is (correctly) deduped.
+  const bank:[string,string,boolean,string[]][] = [
+    ['Rust','technical',false,[
+      'How does the borrow checker decide that a mutable reference can no longer outlive its owner?',
+      'Explain when a boxed closure beats capturing variables by move in a Rust API.',
+      'A worker thread deadlocks only under load. Walk through how you would isolate the cause.',
+      'Why can a recursive async function in Rust deadlock, and how do you restructure it?',
+      'Compare zero-cost abstraction against a hand-written equivalent for a hot parsing loop.',
+      'How would you make a large immutable collection cheap to share across threads?',
+      'Explain trait object dispatch and when a generic would be measurably faster.',
+      'What breaks when you hold a Mutex guard across an await point, and what is the fix?',
+    ]],
+    ['System design','system_design',true,[
+      'Design a rate limiter that stays accurate while several regions can each add capacity.',
+      'How would you shard a write-heavy ledger without losing ordering guarantees per account?',
+      'Explain how you make an idempotent payment endpoint safe under client retries.',
+      'Choose a consistency model for a leaderboard read by millions but written rarely.',
+      'How do you drain connections without dropping in-flight requests during a deploy?',
+      'Describe how you detect and break a split brain between two database nodes.',
+      'How would you backfill a schema change on a live high-traffic table with no downtime?',
+      'Explain backpressure in a queue-based pipeline when one consumer falls behind.',
+    ]],
+    ['Algorithms','coding',false,[]],
+    ['Ledger Service','project',false,[
+      'Describe how the ledger records a reversal without mutating historical entries.',
+      'Explain how you would reconcile ledger totals against the payment processor daily.',
+      'Walk through migrating the ledger schema while preserving audit history.',
+      'How would you guarantee exactly-once effects when a ledger write is retried?',
+      'Explain the trade-off between storing a running balance and deriving it on read.',
+      'How would you design an audit trail that reconstructs every balance change?',
+      'Describe how you would handle a correction that spans multiple accounts atomically.',
+      'Explain how the ledger supports partial refunds while keeping entries append-only.',
+    ]],
+  ];
+  for (const [topic,type,isFlag,questions] of bank) {
+    for (const question of questions) {
+      await Question.create({ownerUserId:tid,question,topic,subtopic:type,concepts:[topic],
+        difficulty:'MEDIUM',questionType:type==='coding'?'CODING':'CONCEPTUAL',archetype:'CONCEPTUAL',
+        provenance:'USER_CREATED',qualityStatus:'approved',isSystemDesign:isFlag});
+    }
+  }
+  // Coding sections draw from the curated CodingProblem bank, not Question.
+  for (const [i,title] of ['Longest substring without repeats','Merge k sorted streams',
+    'Lowest common ancestor in a tree','Merge overlapping intervals'].entries()) {
+    await CodingProblem.create({title,slug:'journey-d-'+i,description:'Solve '+title+' and explain the complexity.',
+      difficulty:'medium',pattern:['arrays'],platform:'custom',examples:[{input:'a',output:'a'}],
+      isInterviewRelevant:true});
+  }
+  expect((await agent.put('/api/profile/preferences').send({
+    dailyQuestions:4,codingCount:2,systemDesignCount:2,projectQuestions:2 })).status).toBe(200);
+
+  const profile=(await agent.get('/api/profile/preferences')).body.data.preferences;
+  expect(profile.dailyQuestions).toBe(4);
+  expect((await agent.post('/api/sessions/generate')).status).toBe(200);
+  const today=(await agent.get('/api/sessions/today')).body.data;
+  const totals=(type:string)=>today.sections.filter((s:any)=>s.type===type)
+    .reduce((n:number,s:any)=>n+s.totalQuestions,0);
+  expect(totals('technical')).toBe(4);
+  expect(totals('coding')).toBe(2);
+  expect(totals('system_design')).toBe(2);
+  expect(totals('project')).toBe(2);
+
+  // Every generated question is attached to the daily calendar exactly once.
+  const dayKey=new Date().toISOString().slice(0,10);
+  const record=await DailyRecord.findOne({userId:new mongoose.Types.ObjectId(tid),dateKey:dayKey}).lean();
+  expect(record).toBeTruthy();
+  const titles=(record as any).entries.map((e:any)=>e.title.trim().toLowerCase());
+  expect(titles).toHaveLength(today.totalQuestions);
+  expect(new Set(titles).size).toBe(titles.length);
+
+  // Regeneration must also reach the calendar, and must not duplicate entries.
+  expect((await agent.put('/api/profile/preferences').send({dailyQuestions:6})).status).toBe(200);
+  expect((await agent.post('/api/sessions/today/regenerate')).status).toBe(200);
+  const after=(await agent.get('/api/sessions/today')).body.data;
+  const regenerated=(await DailyRecord.findOne({userId:new mongoose.Types.ObjectId(tid),dateKey:dayKey}).lean()) as any;
+  const regeneratedTitles=regenerated.entries.map((e:any)=>e.title.trim().toLowerCase());
+  expect(new Set(regeneratedTitles).size).toBe(regeneratedTitles.length);
+  // Replaced questions stay on the calendar as history (per the user's choice) and
+  // newly generated ones are appended, so the day accumulates every question
+  // ever shown. The initial 10 are all still there, plus the 8 that were new.
+  expect(regeneratedTitles.length).toBeGreaterThan(titles.length);
+  expect(regeneratedTitles.length).toBe(18);
+  for (const q of after.sections.flatMap((s:any)=>s.questions))
+    expect(regeneratedTitles).toContain(String(q.question).trim().toLowerCase());
 });
 
 test('sessions expire, bearer tokens cannot authenticate, and logout revokes the cookie',async()=>{

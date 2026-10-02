@@ -12,11 +12,13 @@ import { Question } from '../questions/question.model';
 import { QuestionHistory as QuestionHistoryModel } from '../questions/question-history.model';
 import { Revision } from '../revisions/revision.model';
 import ResumeProfile from '../resume/resume-profile.model';
+import { buildDailyPlan } from '../profile/daily-plan';
 import InterviewProfile from '../profile/interview-profile.model';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { NotFoundError, ConflictError, InternalError, RateLimitError } from '../../common/filters/error-filter';
 import { QuestionType, Difficulty, Provenance } from '../questions/question.model';
-import { calendarService, recordQuestionInDailyCalendar } from '../calendar/calendar.service';
+import { calendarService, recordQuestionInDailyCalendar, recomputeTotals } from '../calendar/calendar.service';
+import DailyRecord from '../calendar/daily-record.model';
 import {
   evaluateAnswer,
   toRevisionEvaluation,
@@ -33,6 +35,73 @@ const interviewAnswerSchema = z.object({
   tradeOff:z.string().min(25).max(750),
   summary:z.string().min(20).max(350),
 });
+
+const SESSION_TYPE_TO_CALENDAR: Record<string, string> = {
+  technical: 'technical', system_design: 'system_design', coding: 'coding',
+  project: 'project', revision: 'revision', mock_interview: 'mock_interview',
+  behavioral: 'behavioral', custom: 'custom',
+};
+
+/**
+ * Attach every question in a session to the user's daily calendar record so
+ * spaced revision can schedule it. Idempotent by normalized title: calling this
+ * again after a regeneration appends only genuinely new questions, so repeated
+ * regenerations never inflate a day's totals. Entries for questions that were
+ * later replaced are intentionally left in place as history.
+ */
+export async function syncSessionToCalendar(
+  userId: string,
+  sessionId: mongoose.Types.ObjectId,
+  occurredAt: Date
+): Promise<number> {
+  try {
+    const sessionQuestions = await SessionQuestion.find({ sessionId }).sort({ order: 1 }).lean();
+    if (!sessionQuestions.length) return 0;
+    const { record } = await DailyRecord.findOrCreateForDate(new mongoose.Types.ObjectId(userId), occurredAt);
+    const normalize = (t?: string) => (t || '').trim().toLowerCase();
+    const existing = new Set((record.entries || []).map((e: any) => normalize(e.title)));
+    let added = 0;
+    for (const sq of sessionQuestions) {
+      const snapshot = (sq as any).questionSnapshot || {};
+      const title = (snapshot.question || '').trim();
+      if (!title || existing.has(normalize(title))) continue;
+      const entry: any = {
+        _id: new mongoose.Types.ObjectId(),
+        type: snapshot.isCoding ? 'coding'
+          : snapshot.isSystemDesign ? 'system_design'
+          : snapshot.isProjectInterview ? 'project'
+          : sq.isRevision ? 'revision'
+          : SESSION_TYPE_TO_CALENDAR[(sq as any).sectionType] || 'technical',
+        title: title.slice(0, 1000),
+        topic: snapshot.topic,
+        subtopic: snapshot.subtopic,
+        concepts: snapshot.concepts,
+        difficulty: snapshot.difficulty,
+        // Reflect real progress: a regenerated question starts unanswered.
+        status: sq.status === 'answered' ? 'answered' : sq.status === 'skipped' ? 'skipped' : 'presented',
+        count: 1,
+        occurredAt,
+        metadata: { sessionQuestionId: String(sq._id) },
+      };
+      if (typeof sq.finalScore === 'number') entry.score = sq.finalScore;
+      record.entries.push(entry);
+      existing.add(normalize(title));
+      added++;
+    }
+    if (added) {
+      recomputeTotals(record);
+      await record.save();
+    }
+    if (added) logger.info('Synced session questions to daily calendar', { userId, sessionId: String(sessionId), added });
+    return added;
+  } catch (error) {
+    // A calendar problem must never fail session generation.
+    logger.warn('Failed to sync session to daily calendar', {
+      userId, sessionId: String(sessionId), error: (error as Error).message,
+    });
+    return 0;
+  }
+}
 
 // Session generation service
 export const sessionService = {
@@ -127,39 +196,8 @@ export const sessionService = {
       generationMessage:session.generationMessage,
     } });
 
-    // Record every question asked today in the user's calendar record
-    try {
-      const { SessionQuestion: SQ } = await import('./daily-session.model');
-      const sessionQuestions = await SQ.find({ sessionId: session._id })
-        .sort({ order: 1 })
-        .lean();
-
-      for (const sq of sessionQuestions) {
-        const snapshot = (sq as any).questionSnapshot || {};
-        await recordQuestionInDailyCalendar(userId, {
-          type: snapshot.isCoding
-            ? 'coding'
-            : snapshot.isSystemDesign
-              ? 'system_design'
-              : snapshot.isProjectInterview
-                ? 'project'
-                : sq.isRevision
-                  ? 'revision'
-                  : 'technical',
-          title: snapshot.question || 'Question',
-          topic: snapshot.topic,
-          subtopic: snapshot.subtopic,
-          concepts: snapshot.concepts,
-          difficulty: snapshot.difficulty,
-          status: 'presented',
-          occurredAt: session.sessionDate || date,
-        });
-      }
-    } catch (calendarErr) {
-      logger.warn('Failed to record generated session in daily calendar', {
-        error: (calendarErr as Error).message,
-      });
-    }
+    // Attach every question to the calendar for spaced revision (idempotent).
+    await syncSessionToCalendar(userId, session._id, session.sessionDate || date);
 
     logger.info('Daily session generated', {
       userId,
@@ -214,7 +252,11 @@ export const sessionService = {
     }
     for (const planned of plan) {
       if (!planned.count) continue;
-      let section = session.sections.find(s=>s.title === planned.title && s.topic === planned.topic);
+      // Sections are identified by type+topic, not title: plan titles are generated
+      // and change when preferences change, which used to orphan the existing
+      // section and leave the day showing two sections for the same topic.
+      const sameSection = (s:any) => s.type === planned.type && s.topic === planned.topic;
+      let section = session.sections.find(sameSection);
       if (!section) {
         session.sections.push({ _id:new mongoose.Types.ObjectId(), type:planned.type,
           title:planned.title, topic:planned.topic, order:session.sections.length, status:'pending',
@@ -222,6 +264,11 @@ export const sessionService = {
           description:'Personalized from confirmed facts and your preferences' });
         await session.save();
         section = session.sections[session.sections.length-1];
+      } else if (section.title !== planned.title) {
+        // Keep the user's progress but adopt the current plan's wording.
+        section.title = planned.title;
+        session.markModified('sections');
+        await session.save();
       }
       // Recover durable mappings created just before an interrupted section checkpoint.
       const assigned = await SessionQuestion.find({ sessionId, sectionId:section._id }).sort({ order:1 });
@@ -267,7 +314,9 @@ export const sessionService = {
             error:(error as Error).message, code:(error as any)?.code });
         }
       }
-      if (section.totalQuestions < planned.count) section.notes =
+      if (planned.type === 'project' && !interviewProfile.confirmedProjects?.length && section.totalQuestions > 0)
+        section.notes = 'No confirmed resume projects yet, so these are portfolio-style prompts rather than questions about your own work. Confirm a project to make them resume-specific.';
+      if (section.totalQuestions < planned.count && !section.notes) section.notes =
         `Not enough new validated questions available. Configure AI or expand your topics; repeats were not inserted.`;
       await session.save();
 
@@ -854,22 +903,18 @@ Return a JSON object with string fields direct, questionFocus, why, how, example
       throw new NotFoundError('Interview profile not found. Please complete onboarding first.');
     }
 
-    // Sync section counts from the latest preferences, mirroring the
-    // preferences PUT handler so changed settings apply to today's session.
-    const prefs = (interviewProfile.preferences || {}) as any;
-    const prefMapping: Record<string,string> = { coding:'codingCount', system_design:'systemDesignCount', project:'projectQuestions' };
-    if (interviewProfile.dailyPlan?.length) {
-      let changed = false;
-      for (const field of ['dailyQuestions','codingCount','systemDesignCount','projectQuestions']) {
-        if (prefs[field] === undefined) continue;
-        const sections = interviewProfile.dailyPlan.filter((section:any)=>(prefMapping[section.type] || 'dailyQuestions')===field);
-        if (!sections.length) continue;
-        sections.forEach((section:any,index:number)=>{
-          const next = Math.floor(prefs[field]/sections.length)+(index<prefs[field]%sections.length?1:0);
-          if (section.count !== next) { section.count = next; changed = true; }
-        });
-      }
-      if (changed) { interviewProfile.markModified('dailyPlan'); await interviewProfile.save(); }
+    // Rebuild the plan from the latest preferences using the same builder the
+    // settings page and onboarding use, so every configured section is present.
+    const nextPlan = buildDailyPlan({
+      preferences: interviewProfile.preferences,
+      confirmedSkills: interviewProfile.confirmedSkills,
+      confirmedProjects: interviewProfile.confirmedProjects,
+      currentRole: interviewProfile.targetRole,
+    });
+    if (nextPlan.length && JSON.stringify(nextPlan) !== JSON.stringify(interviewProfile.dailyPlan || [])) {
+      interviewProfile.dailyPlan = nextPlan;
+      interviewProfile.markModified('dailyPlan');
+      await interviewProfile.save();
     }
 
     // Remove only unrevealed questions; answered/reviewed/skipped stay for the record.
@@ -891,6 +936,29 @@ Return a JSON object with string fields direct, questionFocus, why, how, example
         }
         fresh.markModified('sections');
         await fresh.save();
+      }
+    }
+
+    // Drop sections the user has since zeroed out, so a slider at 0 really
+    // removes that section from today. Anything with recorded work is kept.
+    const plannedKeys = new Set(nextPlan.map((p:any)=>`${p.type}::${p.topic}`));
+    const staleSectionIds:string[] = [];
+    for (const s of session.sections as any[]) {
+      if (plannedKeys.has(`${s.type}::${s.topic}`)) continue;
+      const worked = await SessionQuestion.exists({ sessionId:session._id, sectionId:s._id,
+        status:{ $nin:['pending','presented'] } });
+      if (!worked) staleSectionIds.push(String(s._id));
+    }
+    if (staleSectionIds.length) {
+      const stale = await DailySession.findById(session._id);
+      if (stale) {
+        const staleQuestionIds = (stale.sections as any[])
+          .filter((s:any)=>staleSectionIds.includes(String(s._id)))
+          .flatMap((s:any)=>(s.questions||[]).map((id:any)=>String(id)));
+        if (staleQuestionIds.length) await SessionQuestion.deleteMany({ _id:{ $in:staleQuestionIds } });
+        stale.sections = (stale.sections as any[]).filter((s:any)=>!staleSectionIds.includes(String(s._id)));
+        stale.markModified('sections');
+        await stale.save();
       }
     }
 
@@ -923,6 +991,9 @@ Return a JSON object with string fields direct, questionFocus, why, how, example
         generationState:'completed', generationMessage:refreshed.generationMessage,
       } });
       await this.recomputeSessionAggregates(refreshed);
+      // Regenerated questions must reach the calendar too, otherwise they never
+      // enter the spaced-revision schedule.
+      await syncSessionToCalendar(userId, refreshed._id, refreshed.sessionDate || date);
       return refreshed;
     } catch (error) {
       await DailySession.updateOne({ _id:refreshed._id }, {

@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
 import { hasAI, hasFallbackAI, getActiveProvider } from '../../common/services/ai-provider';
+import { buildDailyPlan } from './daily-plan';
 import aiConfig from '../../config';
 import logger from '../../config/logger';
 import { DifficultyChoice } from './interview-profile.model';
@@ -115,17 +116,25 @@ router.put(
     for (const [field, value] of Object.entries(update)) {
       profile.preferences[field] = value;
     }
-    // Mark subdocument path modified so mongoose persists the change
-    // Synchronize the editable counts with the dynamic daily plan.
-    if (profile.dailyPlan?.length) {
-      const mapping: Record<string,string> = { coding:'codingCount', system_design:'systemDesignCount', project:'projectQuestions' };
-      for (const field of ['dailyQuestions','codingCount','systemDesignCount','projectQuestions']) {
-        if (update[field] === undefined) continue;
-        const sections = profile.dailyPlan.filter(section=>(mapping[section.type] || 'dailyQuestions')===field);
-        sections.forEach((section,index)=>{
-          section.count=Math.floor(update[field]/sections.length)+(index<update[field]%sections.length?1:0);
-        });
-      }
+    // Rebuild the plan from every preference, not just the ones in this request,
+    // so a slider always produces its section even if it was never planned before.
+    const nextPlan = buildDailyPlan({
+      preferences: {
+        dailyQuestions: update.dailyQuestions ?? profile.preferences?.dailyQuestions,
+        codingCount: update.codingCount ?? profile.preferences?.codingCount,
+        systemDesignCount: update.systemDesignCount ?? profile.preferences?.systemDesignCount,
+        projectQuestions: update.projectQuestions ?? profile.preferences?.projectQuestions,
+        codingLanguages: profile.preferences?.codingLanguages,
+        focusTopics: profile.preferences?.focusTopics,
+        excludedTopics: profile.preferences?.excludedTopics,
+        systemDesignFocus: profile.preferences?.systemDesignFocus,
+      },
+      confirmedSkills: profile.confirmedSkills,
+      confirmedProjects: profile.confirmedProjects,
+      currentRole: profile.targetRole,
+    });
+    if (nextPlan.length) {
+      profile.dailyPlan = nextPlan;
       profile.markModified('dailyPlan');
     }
     profile.markModified('preferences');

@@ -202,7 +202,7 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
     industries: [String],
     interviewTypes: [String],
     interviewDate: Date,
-    dailyPlan: [{ title: String, topic: String, type: { type: String }, count: { type: Number, min: 0, max: 20 } }],
+    dailyPlan: [{ title: String, topic: String, type: { type: String }, count: { type: Number, min: 0, max: 50 } }],
     curriculum: [{ topic: String, source: String, priority: Number }],
     targetCompanies: [{ type: String }],
     customCompanies: { type: [String], default: [] },
