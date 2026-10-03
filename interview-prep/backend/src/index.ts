@@ -40,6 +40,7 @@ import './modules/analytics/progress-analytics.model';
 import feedbackRoutes from './modules/questions/feedback.routes';
 import adminRoutes from './modules/questions/admin.routes';
 const app = express();
+app.set('etag', false);
 
 // Security middleware
 app.use(helmet({
@@ -52,6 +53,12 @@ app.use(helmet({
     },
   },
 }));
+
+// Prevent browser caching of API responses
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  next();
+});
 
 // CORS
 app.use(cors({

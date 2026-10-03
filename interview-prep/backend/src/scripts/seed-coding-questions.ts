@@ -3,6 +3,22 @@ import config from '../config';
 import logger from '../config/logger';
 import { CodingProblem } from '../modules/coding/coding-problem.model';
 
+/** Minimal statement built from the curated metadata when none was supplied. */
+const PATTERN_ENUM = ['arrays', 'strings', 'linked_lists', 'trees', 'graphs', 'dynamic_programming',
+  'backtracking', 'sorting', 'searching', 'greedy', 'intervals', 'math', 'geometry', 'bit_manipulation',
+  'tries', 'heap', 'stack', 'queue', 'two_pointers', 'sliding_window', 'binary_search', 'union_find',
+  'segment_tree', 'prefix_sum', 'monotonic_stack', 'topological_sort', 'shortest_path',
+  'minimum_spanning_tree', 'flow', 'dp_on_graphs'];
+
+function problemStatement(p: { title: string; difficulty: string; pattern: string[]; tags: string[] }): string {
+  const patterns = (p.pattern || []).join(', ') || 'an efficient';
+  const tags = (p.tags || []).slice(0, 4).join(', ');
+  return `Solve "${p.title}" (${p.difficulty} difficulty). Describe the algorithm you would implement, `
+    + `its time and space complexity, and the edge cases it must handle. Aim for an ${patterns} approach.`
+    + (tags ? ` Related concepts: ${tags}.` : '')
+    + ' Give a complete, self-contained answer: no partial snippets and no external references.';
+}
+
 // Parse the question patterns and generate coding problems
 const questionPatterns = {
   two_pointer: {
@@ -200,9 +216,22 @@ async function seedAllCodingProblems() {
           continue;
         }
 
-        // Create the problem
+        // Create the problem.
+        // The curated table only carries title/difficulty/pattern/tags, but the
+        // schema requires a description. Failing validation here aborted the
+        // whole seed on the first insert, which is why the coding bank was
+        // always empty and coding sections produced zero questions.
         await CodingProblem.create({
           ...problem,
+          description: (problem as { description?: string }).description?.trim() || problemStatement(problem),
+          // The curated table uses low/medium/high; the schema allows
+          // rare/occasional/common/frequent.
+          frequency: ['rare', 'occasional', 'common', 'frequent'].includes(problem.frequency)
+            ? problem.frequency
+            : ({ low: 'rare', medium: 'occasional', high: 'frequent' } as Record<string, string>)[problem.frequency] || 'occasional',
+          // Tags carry pattern names that are not in the schema enum
+          // (e.g. 'hashing'); keep only recognised ones so the seed completes.
+          pattern: (problem.pattern || []).filter(p => PATTERN_ENUM.includes(p)),
           createdAt: new Date(),
           updatedAt: new Date(),
         });

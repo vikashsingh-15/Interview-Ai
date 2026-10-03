@@ -87,6 +87,9 @@ router.get(
           status: section.status,
           totalQuestions: section.totalQuestions,
           completedQuestions: section.completedQuestions,
+          // `notes` explains a short or empty section instead of leaving the
+          // user to guess why a configured count was not delivered.
+          notes: section.notes,
           topic: section.topic,
           subtopic: section.subtopic,
           questions: section.questions?.map((q: any) => ({
@@ -159,6 +162,9 @@ router.get(
           status: section.status,
           totalQuestions: section.totalQuestions,
           completedQuestions: section.completedQuestions,
+          // `notes` explains a short or empty section instead of leaving the
+          // user to guess why a configured count was not delivered.
+          notes: section.notes,
           topic: section.topic,
           subtopic: section.subtopic,
           questions: section.questions?.map((q: any) => ({
@@ -200,8 +206,17 @@ router.get(
 router.get('/:sessionId/questions/:questionId/answer', authenticate,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const answer = await sessionService.getInterviewAnswer(req.params.sessionId, req.params.questionId, req.user!.id);
-    res.json({ success:true, data:{ answer } });
-  }));
+    res.json({ success:true, data: answer });
+  }))
+
+// Explicitly generate the detailed answer on demand (re-shows the answer from
+// the AI provider if one is already cached). Used when the answer was never
+// generated for a question, or the user wants a fresh re-generation.
+router.post('/:sessionId/questions/:questionId/generate-answer', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const answer = await sessionService.getInterviewAnswer(req.params.sessionId, req.params.questionId, req.user!.id);
+    res.json({ success:true, data: answer });
+  }))
 
 router.post('/:sessionId/questions/:questionId/review', authenticate,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -427,6 +442,9 @@ router.get(
           status: section.status,
           totalQuestions: section.totalQuestions,
           completedQuestions: section.completedQuestions,
+          // `notes` explains a short or empty section instead of leaving the
+          // user to guess why a configured count was not delivered.
+          notes: section.notes,
           topic: section.topic,
           subtopic: section.subtopic,
           questions: section.questions?.map((q: any) => ({

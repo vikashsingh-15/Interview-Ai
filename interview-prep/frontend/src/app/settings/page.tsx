@@ -77,22 +77,22 @@ const COUNT_FIELDS: Array<{
     key: 'codingCount',
     label: 'Coding / DSA problems per day',
     description: 'Hands-on problems in your preferred patterns',
-    min: 1,
-    max: 10,
+    min: 0,
+    max: 50,
   },
   {
     key: 'systemDesignCount',
     label: 'System design questions per day',
     description: 'HLD/LLD and distributed systems design',
-    min: 1,
-    max: 10,
+    min: 0,
+    max: 50,
   },
   {
     key: 'projectQuestions',
     label: 'Project interview questions per day',
     description: 'Deep dives into your resume projects',
     min: 0,
-    max: 10,
+    max: 50,
   },
 ];
 

@@ -131,11 +131,20 @@ export default function OnboardingPage() {
       </div>)}
       <button className="underline text-blue-700 block" onClick={()=>setPlan([...plan,{title:'',topic:'',type:'custom',count:1}])}>Add category (set count to 0 to disable)</button>
       <button className={buttonStyle} disabled={busy || !reviewed} onClick={()=>act(async()=>{
-        await api.post('/profile/onboarding',{targetRole:role,targetLevel:level,actualExperienceMonths:months,
-          targetCompanies:list(companies),industries:list(industries),focusTopics:list(focus),excludedTopics:list(avoid),
-          difficulty,dailyPlan:plan,interviewDate:date?new Date(date+'T12:00:00Z').toISOString():undefined});
+        // Build the onboarding payload, omitting dailyPlan when empty so the
+        // backend builds the default plan from confirmed resume facts and
+        // preferences instead of failing Zod validation on an empty array.
+        const onboardingPayload = {
+          targetRole:role,targetLevel:level,actualExperienceMonths:months,
+          targetCompanies:list(companies),industries:list(industries),
+          focusTopics:list(focus),excludedTopics:list(avoid),
+          difficulty,dailyPlan:plan.length ? plan : undefined,
+          interviewDate:date?new Date(date+'T12:00:00Z').toISOString():undefined,
+        };
+        await api.post('/profile/onboarding',onboardingPayload);
         setMessage('Profile and curriculum saved. Preparing your first session…');
-        await api.post('/sessions/generate');router.push('/sessions/today');
+        await api.post('/sessions/generate');
+        router.push('/sessions/today');
       })}>{busy?'Working…':'Save profile and start practice'}</button>
     </section>}
   </main>;

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { structuredAI } from '../../common/services/structured-ai';
 import { hasAI } from '../../common/services/ai-provider';
 
-import { generatePersonalizedQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
+import { generatePersonalizedQuestions, generateCodingQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
 import mongoose from 'mongoose';
 import config from '../../config';
 import logger from '../../config/logger';
@@ -34,6 +34,20 @@ const interviewAnswerSchema = z.object({
   example:z.string().min(35).max(850),
   tradeOff:z.string().min(25).max(750),
   summary:z.string().min(20).max(350),
+});
+
+// Rich, interview-ready detailed answer with depth suitable for Senior-level prep.
+const interviewAnswerDetailedSchema = z.object({
+  overview:z.string().min(40).max(1200),
+  keyPoints:z.array(z.string().min(8).max(250)).min(3).max(10),
+  algorithmOrApproach:z.string().min(40).max(1500),
+  complexity:z.string().min(20).max(500),
+  codeSketch:z.string().min(20).max(1500).optional(),
+  edgeCases:z.array(z.string().min(8).max(250)).min(1).max(6),
+  commonMistakes:z.array(z.string().min(8).max(250)).min(1).max(6),
+  whyItMatters:z.string().min(30).max(700),
+  followUpQuestions:z.array(z.string().min(10).max(250)).min(1).max(5),
+  summary:z.string().min(20).max(400),
 });
 
 const SESSION_TYPE_TO_CALENDAR: Record<string, string> = {
@@ -285,6 +299,7 @@ export const sessionService = {
         // Also exclude anything already exposed via QuestionExposure (skip/
         // regenerate paths), so a skipped problem never resurfaces.
         const exposed = await exposedQuestionIds(userId);
+        const bankSize = await mongoose.model('CodingProblem').countDocuments({});
         const problemCandidates = await mongoose.model('CodingProblem').find({
           isHidden:false,isDeprecated:false,isInterviewRelevant:true,
           _id:{ $nin:priorQuestions.map(q=>q.sourceId).filter(Boolean) },
@@ -302,6 +317,26 @@ export const sessionService = {
             { upsert:true,new:true });
           await add(canonical);
         }
+        // The curated bank is the preferred source, but it is seeded data. When it
+        // cannot cover the quota (an unseeded install, or every candidate already
+        // served), fall back to AI so the user's coding count is honoured instead
+        // of leaving a hole in the day.
+        const stillNeeded = planned.count - section.totalQuestions;
+        if (stillNeeded > 0) {
+          try {
+            const generated = await generateCodingQuestions(userId, planned.topic, stillNeeded, sessionId);
+            for (const question of generated) await add(question);
+          } catch (error) {
+            sectionFailures.push({ topic:planned.topic, title:planned.title, message:(error as Error).message });
+            logger.warn('Coding question generation failed', { userId, topic:planned.topic,
+              bankSize, error:(error as Error).message });
+          }
+          if (section.totalQuestions === 0) {
+            section.notes = bankSize === 0
+              ? 'The curated coding bank is empty on this install and the AI coding fallback produced nothing. Run "npm run seed:coding" in the backend folder, or set an AI provider key in Settings.'
+              : 'No unused coding problems are left in the curated bank and the AI coding fallback produced nothing. Seed more coding problems or retry later.';
+          }
+        }
       } else {
         // One unfillable topic must not void the whole day: record why and let
         // the remaining sections generate, so the user still gets practice.
@@ -317,7 +352,7 @@ export const sessionService = {
       if (planned.type === 'project' && !interviewProfile.confirmedProjects?.length && section.totalQuestions > 0)
         section.notes = 'No confirmed resume projects yet, so these are portfolio-style prompts rather than questions about your own work. Confirm a project to make them resume-specific.';
       if (section.totalQuestions < planned.count && !section.notes) section.notes =
-        `Not enough new validated questions available. Configure AI or expand your topics; repeats were not inserted.`;
+        `Only ${section.totalQuestions} of ${planned.count} questions could be generated — no repeats were inserted. Widen your topics, set difficulty to Mixed, or press Regenerate later.`;
       await session.save();
 
       async function add(question:any) {
@@ -435,8 +470,13 @@ export const sessionService = {
     return session || null;
   },
 
+  /**
+   * Generate a rich detailed answer guide from a question + its short answer.
+   * Used when the short answer is already cached but the detailed guide was not.
+   * Also generates the detailed answer when the short answer is already cached.
+   */
   async getInterviewAnswer(sessionId: string, mappingId: string, userId: string): Promise<{
-    sections?: z.infer<typeof interviewAnswerSchema>; legacyAnswer?: string;
+    sections?: z.infer<typeof interviewAnswerSchema>; legacyAnswer?: string; detailed?: z.infer<typeof interviewAnswerDetailedSchema>;
   }> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');
@@ -448,36 +488,85 @@ export const sessionService = {
       await SessionQuestion.updateOne({ _id:mapped._id, status:'pending' }, { $set:{ status:'presented' } });
     }
     const cached = interviewAnswerSchema.safeParse(question.interviewAnswerSections);
-    if (cached.success) return { sections:cached.data };
+    const cachedDetailed = question.interviewAnswerDetailed != null;
+    if (cached.success && cachedDetailed) return { sections:cached.data, detailed:question.interviewAnswerDetailed };
+    if (cached.success && !cachedDetailed) {
+      // Have the short answer but not the detailed one: generate detailed from cache.
+      const detailed = await this.generateDetailedAnswer(userId, mapped, question, cached.data);
+      await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerDetailed:detailed } });
+      return { sections:cached.data, detailed };
+    }
     const reference = question.interviewAnswer || question.detailedAnswer || question.shortAnswer || question.codingProblem?.solutionCode || '';
     if (!hasAI()) {
-      if (reference) return { legacyAnswer:reference };
+      if (reference) {
+        // No AI provider configured: return the cached answer as plain text.
+        // The detailed answer from generation is stored on the question model
+        // and is shown to the user as the legacy answer.
+        return { legacyAnswer: reference };
+      }
       throw new NotFoundError('An answer is not available for this question yet');
     }
-    try {
-      const result = await structuredAI({ userId, purpose:'interview-answer', version:'answer-v2',
+    const shortSystemPrompt = 'Write a technically accurate, standard interview answer to the exact question. The direct field MUST answer the question in its first sentence. questionFocus defines the key terms and what the interviewer is asking. why gives the rationale. how explains concrete steps or mechanism. example gives one specific hypothetical scenario. tradeOff names a real limitation and when an alternative fits. summary closes in one sentence. Keep the spoken answer (direct, why, how, example, tradeOff, summary) about 140-200 words total, suitable for 60-90 seconds. Use a real number only if the reference supplies one; do not fabricate metrics or personal experience. Correct technical mistakes in the reference. Do not claim that the candidate implemented a system unless verified. For coding questions cover the algorithm, complexity and an edge case across the fields. Return a JSON object with string fields direct, questionFocus, why, how, example, tradeOff, summary.';
+    const detailedSystemPrompt = 'You are a senior technical interviewer preparing a candidate for a ' + (question.difficulty || 'intermediate') + ' ' + (question.questionType || 'technical') + ' interview question. Produce a complete, interview-ready detailed answer guide for the candidate to study. The answer must be technically accurate, specific, and suitable for a candidate targeting a Senior-level role. Do not claim the candidate implemented anything unless the reference says so. Cover the following in the fields below: - overview: a concise 2-4 sentence explanation of the core idea or approach. - keyPoints: 3-10 bullet-style statements capturing the essential concepts, mechanisms, or principles. - algorithmOrApproach: a step-by-step explanation of the algorithm, architecture, or reasoning approach. - complexity: time and space complexity (for coding), or key design trade-offs and scaling considerations (for system design). - codeSketch: for coding questions, a short pseudocode or language-agnostic sketch of the core approach (omit for non-coding). - edgeCases: 1-6 specific edge cases or pitfalls that a strong candidate should mention. - commonMistakes: 1-6 mistakes or weak answers that interviewers commonly see. - whyItMatters: why this question is asked and what it reveals about the candidate. - followUpQuestions: 1-5 likely follow-up questions the interviewer may ask. - summary: a one-sentence takeaway. Keep the full detailed answer focused and concrete; avoid filler and generic statements. Return a JSON object matching the schema exactly.';
+    const [shortResult, detailedResult] = await Promise.all([
+      structuredAI({ userId, purpose:'interview-answer', version:'answer-v2',
         schema:interviewAnswerSchema,
         context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
           difficulty:question.difficulty, type:question.questionType },
-        system:`Write a technically accurate, standard interview answer to the exact question.
-The direct field MUST answer the question in its first sentence. questionFocus defines the key terms and what the interviewer is asking.
-why gives the rationale. how explains concrete steps or mechanism. example gives one specific hypothetical scenario.
-tradeOff names a real limitation and when an alternative fits. summary closes in one sentence.
-Keep the spoken answer (direct, why, how, example, tradeOff, summary) about 140-200 words total, suitable for 60-90 seconds.
-Use a real number only if the reference supplies one; do not fabricate metrics or personal experience.
-Correct technical mistakes in the reference. Do not claim that the candidate implemented a system unless verified.
-For coding questions cover the algorithm, complexity and an edge case across the fields.
-Return a JSON object with string fields direct, questionFocus, why, how, example, tradeOff, summary.`,
-      });
-      await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerSections:result } });
-      return { sections:result };
-    } catch (error) {
-      logger.warn('Interview answer enhancement failed', { questionId:String(question._id), error:(error as Error).message });
-      if (reference) return { legacyAnswer:reference };
-      throw error;
-    }
+        system:shortSystemPrompt,
+      }),
+      structuredAI({ userId, purpose:'interview-answer-detailed', version:'answer-detailed-v1',
+        schema:interviewAnswerDetailedSchema,
+        context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
+          difficulty:question.difficulty, type:question.questionType, shortAnswer:null },
+        system:detailedSystemPrompt,
+      }),
+    ]);
+    await Question.updateOne({ _id:question._id }, { $set:{
+      interviewAnswerSections:shortResult,
+      interviewAnswerDetailed:detailedResult,
+    } });
+    return { sections:shortResult, detailed:detailedResult };
   },
-
+  async generateDetailedAnswer(
+    userId: string,
+    mapped: any,
+    question: any,
+    shortAnswer: any,
+  ): Promise<any> {
+    if (question.interviewAnswerDetailed) return question.interviewAnswerDetailed;
+    const reference = question.interviewAnswer || question.detailedAnswer || question.shortAnswer || question.codingProblem?.solutionCode || '';
+    const systemPrompt = [
+      'You are a senior technical interviewer preparing a candidate for a ',
+      question.difficulty || 'intermediate',
+      ' ',
+      question.questionType || 'technical',
+      ' interview question. Produce a complete, interview-ready detailed answer guide for the candidate to study. The answer must be technically accurate, specific, and suitable for a candidate targeting a Senior-level role.',
+      'Do not claim the candidate implemented anything unless the reference says so.',
+      'Use the short answer below as a starting point and expand it into a richer study guide.',
+      'Cover the following in the fields below:',
+      '- overview: a concise 2-4 sentence explanation of the core idea or approach.',
+      '- keyPoints: 3-10 bullet-style statements capturing the essential concepts, mechanisms, or principles.',
+      '- algorithmOrApproach: a step-by-step explanation of the algorithm, architecture, or reasoning approach.',
+      '- complexity: time and space complexity (for coding), or key design trade-offs and scaling considerations (for system design).',
+      '- codeSketch: for coding questions, a short pseudocode or language-agnostic sketch of the core approach (omit for non-coding).',
+      '- edgeCases: 1-6 specific edge cases or pitfalls that a strong candidate should mention.',
+      '- commonMistakes: 1-6 mistakes or weak answers that interviewers commonly see.',
+      '- whyItMatters: why this question is asked and what it reveals about the candidate.',
+      '- followUpQuestions: 1-5 likely follow-up questions the interviewer may ask.',
+      '- summary: a one-sentence takeaway.',
+      'Keep the full detailed answer focused and concrete; avoid filler and generic statements.',
+      'Return a JSON object matching the schema exactly.',
+    ].join(' ');
+    const result = await structuredAI({ userId, purpose:'interview-answer-detailed', version:'answer-detailed-v1',
+      schema:interviewAnswerDetailedSchema,
+      context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
+        difficulty:question.difficulty, type:question.questionType, shortAnswer },
+      system:systemPrompt,
+    });
+    await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerDetailed:result } });
+    return result;
+  },
   async markQuestionReviewed(sessionId: string, mappingId: string, userId: string): Promise<number> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');

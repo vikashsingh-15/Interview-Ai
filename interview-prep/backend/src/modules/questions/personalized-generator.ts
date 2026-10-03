@@ -61,6 +61,26 @@ const questionSchema = z.object({
 });
 export const generatedBatchSchema = z.object({ questions: z.array(questionSchema).min(1).max(20) });
 
+// Coding questions need a problem statement, not just a prompt. This is the
+// fallback shape used when the curated CodingProblem bank cannot cover a
+// section's quota, so a coding slot is never silently left empty.
+const codingProblemSchema = z.object({
+  question: z.string().min(20).max(400),
+  description: z.string().min(120).max(3000),
+  pattern: z.string().min(2).max(120),
+  concepts: z.array(z.string().min(1).max(100)).min(1).max(8),
+  difficulty: z.enum(['EASY','MEDIUM','HARD','EXPERT']),
+  constraints: z.array(z.string().min(1).max(200)).min(1).max(8),
+  examples: z.array(z.object({ input:z.string().max(400), output:z.string().max(400),
+    explanation:z.string().max(400).optional() })).min(1).max(3),
+  starterCode: z.string().max(2000).optional(),
+  complexityTime: z.string().max(120),
+  complexitySpace: z.string().max(120),
+  detailedAnswer: z.string().min(350).max(6000),
+  estimatedAnswerTimeSeconds: z.number().int().min(60).max(1800),
+});
+export const generatedCodingBatchSchema = z.object({ problems: z.array(codingProblemSchema).min(1).max(10) });
+
 export async function buildQuestionPlan(userId: string, topic: string, count: number, type = 'technical') {
   const profile = await InterviewProfile.findOne({ userId }).lean();
   if (!profile?.onboardingCompleted) throw new BadRequestError('Complete resume review and onboarding first');
@@ -303,6 +323,87 @@ Do not generate executable coding problems here; coding uses a validated curated
     }
   }
   // Never pad a shortage with repeats or masquerade templates as generated questions.
+  return accepted;
+}
+
+/**
+ * Generate coding questions with the AI when the curated CodingProblem bank
+ * cannot cover the requested count. Without this a user who never ran the
+ * coding seeder got a coding section with zero questions and no clear reason.
+ */
+export async function generateCodingQuestions(userId: string, topic: string, count: number,
+  sessionId?: mongoose.Types.ObjectId): Promise<any[]> {
+  if (!count) return [];
+  const context = await buildQuestionPlan(userId, topic, count, 'coding');
+  const plan = await QuestionGenerationPlan.create({ userId, sessionId, topic, count, type:'coding',
+    reason:'Coding bank could not cover this section; generated with AI', context, status:'planning' });
+  const allExposure = await QuestionExposure.find({ userId }).select('question normalizedHash').lean();
+  const legacy = await QuestionHistory.find({ userId }).select('questionSnapshot.question').lean();
+  const seenTexts = [...allExposure.map(e=>e.question),...legacy.map(h=>h.questionSnapshot.question)];
+  const DIFFICULTY_MAP:any = { easy:'EASY', medium:'MEDIUM', hard:'HARD', extra_hard:'EXPERT' };
+  const accepted:any[] = [];
+  const rejections:Record<string, number> = {};
+  const note = (reason:string) => { rejections[reason] = (rejections[reason] || 0) + 1; };
+  try {
+    let aiError:any;
+    for (const provider of aiProviderCandidates().map(c=>c.name)) {
+      if (accepted.length >= count) break;
+      const meta = await structuredAIMeta({ userId, purpose:'personalized-coding', version:'coding-v1',
+        preferredProvider:provider, schema:generatedCodingBatchSchema,
+        context:{ ...context, count:count-accepted.length, excludedQuestions:seenTexts.slice(-40) },
+        system: `You write self-contained programming interview problems for a ${context.targetLevel || 'software'} candidate.
+Return problems that are solvable from the statement alone, with no external service, no company-specific trivia and no URLs.
+Vary the pattern across the batch. Prefer ${topic} idioms or, when the language is unspecified, language-agnostic algorithms.
+Never present the problem as something the candidate already built.
+Return {"problems":[{"question":"short title","description":"full problem statement with the task and expected output",
+"pattern":"named pattern e.g. sliding window","concepts":["..."],"difficulty":"EASY|MEDIUM|HARD|EXPERT",
+"constraints":["..."],"examples":[{"input":"...","output":"...","explanation":"..."}],"starterCode":"optional skeleton",
+"complexityTime":"O(n)","complexitySpace":"O(1)",
+"detailedAnswer":"the approach and the optimal solution explained in prose, at least 350 characters, including why it is correct",
+"estimatedAnswerTimeSeconds":900}]}.`,
+      }).catch(error => { aiError = error; return null as any; });
+      if (!meta) break;
+      for (const problem of meta.result.problems) {
+        if (accepted.length >= count) break;
+        if (seenTexts.concat(accepted.map(a=>a.question)).some(t=>nearDuplicate(t, problem.question))) {
+          note('duplicate'); continue;
+        }
+        if (context.difficulty !== 'mixed' && problem.difficulty !== DIFFICULTY_MAP[context.difficulty]) {
+          note('difficulty_mismatch'); continue;
+        }
+        const normalizedHash = questionHash(problem.question);
+        let saved;
+        try {
+          saved = await Question.create({ question:problem.question, topic, subtopic:problem.pattern,
+            concepts:problem.concepts, difficulty:problem.difficulty, questionType:'CODING', archetype:'IMPLEMENTATION',
+            detailedAnswer:problem.detailedAnswer, shortAnswer:problem.detailedAnswer.slice(0,400),
+            estimatedAnswerTimeSeconds:problem.estimatedAnswerTimeSeconds, isCoding:true,
+            codingProblem:{ description:problem.description, constraints:problem.constraints, examples:problem.examples,
+              starterCode:problem.starterCode, complexityTime:problem.complexityTime,
+              complexitySpace:problem.complexitySpace, pattern:problem.pattern },
+            provenance:'AI_GENERATED', qualityStatus:'approved', qualityScore:0.6, promptVersion:'coding-v1',
+            generatorModel:meta.model, generatedAt:new Date(), ownerUserId:userId, normalizedHash,
+            sourceId:String(plan._id), tags:['coding','ai-generated'],
+            expectedAnswerDepth:'DEEP', interviewPriority:'HIGH', resumeRelevance:'LOW' });
+        } catch (e:any) {
+          if (e.code !== 11000) throw e;
+          saved = await Question.findOne({ normalizedHash, ownerUserId:userId });
+        }
+        if (!saved) { note('persist_failed'); continue; }
+        accepted.push(saved);
+      }
+    }
+    if (!accepted.length && aiError) throw aiError;
+    if (!accepted.length) {
+      logger.warn('AI coding fallback produced nothing', { userId, topic, rejections });
+    }
+    await QuestionGenerationPlan.updateOne({ _id:plan._id },
+      { status:accepted.length ? 'completed' : 'exhausted', reason:`Coding fallback produced ${accepted.length}/${count}` });
+  } catch (error) {
+    await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:'failed' });
+    logger.warn('AI coding fallback failed', { userId, topic, error:(error as Error).message });
+    throw error;
+  }
   return accepted;
 }
 

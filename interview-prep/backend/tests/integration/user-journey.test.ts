@@ -293,6 +293,27 @@ test('all four configured sections generate, and regenerated questions reach the
     expect(regeneratedTitles).toContain(String(q.question).trim().toLowerCase());
 });
 
+test('a coding section that cannot reach its quota reports why instead of dropping it silently',async()=>{
+  // Regression: the coding section drew only from the curated CodingProblem
+  // bank. With that bank unseeded it produced zero questions and the day just
+  // looked short, which is how questions appeared to be "cut for some reason".
+  const agent=request.agent(app);
+  await onboard(agent,'e@example.test','Go','Queue Service');
+  // Fewer curated problems exist than requested, and AI is disabled in tests, so
+  // the shortfall is real and must be explained through the API.
+  expect((await agent.put('/api/profile/preferences')
+    .send({dailyQuestions:1,codingCount:10,systemDesignCount:0,projectQuestions:0})).status).toBe(200);
+  expect((await agent.post('/api/sessions/generate')).status).toBe(200);
+  const today=(await agent.get('/api/sessions/today')).body.data;
+  const detail=(await agent.get('/api/sessions/'+today.sessionId)).body.data;
+  const coding=detail.sections.find((s:any)=>s.type==='coding');
+  expect(coding).toBeTruthy();
+  expect(coding.totalQuestions).toBeGreaterThan(0);
+  expect(coding.totalQuestions).toBeLessThan(10);
+  // The reason travels with the session so the UI can show it.
+  expect(String(coding.notes)).toMatch(/could be generated|No unused coding problems/i);
+});
+
 test('sessions expire, bearer tokens cannot authenticate, and logout revokes the cookie',async()=>{
   const token=await createSession(userId);
   expect((await request(app).get('/api/auth/me').set('Authorization','Bearer '+token)).status).toBe(401);

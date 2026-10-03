@@ -116,6 +116,11 @@ export interface IQuestion {
     direct: string; questionFocus: string; why: string; how: string;
     example: string; tradeOff: string; summary: string;
   };
+  interviewAnswerDetailed?: {
+    overview: string; keyPoints: string[]; algorithmOrApproach: string; complexity: string;
+    codeSketch?: string; edgeCases: string[]; commonMistakes: string[]; whyItMatters: string;
+    followUpQuestions: string[]; summary: string;
+  };
   internalWorking?: string;
   practicalExample?: string;
   productionContext?: string;
@@ -316,6 +321,7 @@ const questionSchema = new Schema<IQuestion>(
     detailedAnswer: String,
     interviewAnswer: String,
     interviewAnswerSections: Schema.Types.Mixed,
+    interviewAnswerDetailed: Schema.Types.Mixed,
     internalWorking: String,
     practicalExample: String,
     productionContext: String,
