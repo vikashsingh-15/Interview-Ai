@@ -82,7 +82,7 @@ function bankVisibility(userId: string) {
 export async function listTopics(userId: string) {
   const visibility = bankVisibility(userId);
   const rows = await Question.aggregate([
-    { $match: { isHidden: false, isDeprecated: false, qualityStatus: 'approved', 'practiceSource.kind': { $exists: false }, ...visibility } },
+    { $match: { isHidden: false, isDeprecated: false, qualityStatus: 'approved', isCoding: { $ne: true }, 'practiceSource.kind': { $exists: false }, ...visibility } },
     {
       $group: {
         _id: '$topic',
@@ -491,7 +491,7 @@ async function persistTopicQuestion(input: {
   try {
     return await Question.create({
       question: q.question,
-      topic: topic.toLowerCase() === 'coding' ? (q.topic || 'Coding') : topic,
+      topic: isCoding ? 'Coding' : topic,
       subtopic: q.subtopic,
       concepts: q.concepts,
       difficulty: q.difficulty,
@@ -642,7 +642,7 @@ export async function startPracticeSet(params: {
           isCoding: !!q.isCoding,
           questionSnapshot: {
             question: q.question,
-            topic: q.topic,
+            topic: q.isCoding ? 'Coding' : q.topic,
             subtopic: q.subtopic,
             concepts: q.concepts || [],
             difficulty: q.difficulty,
@@ -674,7 +674,7 @@ export async function startPracticeSet(params: {
     await recordQuestionInDailyCalendar(userId, {
       type: source?.kind === 'project' ? 'project' : isCodingTopic || q.isCoding ? 'coding' : 'technical',
       title: q.question,
-      topic: isCodingTopic ? 'Coding' : q.topic,
+      topic: isCodingTopic || q.isCoding ? 'Coding' : q.topic,
       subtopic: q.subtopic,
       concepts: q.concepts || [],
       difficulty: q.difficulty,
@@ -843,20 +843,23 @@ export async function topicHistory(params: {
   if (topic && topic.toLowerCase() !== 'all' && !params.source) {
     filter['questionSnapshot.practiceSource.kind'] = { $exists: false };
     if (topic.toLowerCase() === 'coding') filter.isCoding = true;
-    else filter['questionSnapshot.topic'] = topic;
+    else {
+      filter.isCoding = { $ne: true };
+      filter['questionSnapshot.topic'] = topic;
+    }
   }
 
   const rows = await QuestionHistory.find(filter)
     .sort({ updatedAt: -1 })
     .limit(limit)
-    .select('questionId questionSnapshot status finalScore feedback difficultyFeedback answer updatedAt createdAt')
+    .select('questionId questionSnapshot isCoding status finalScore feedback difficultyFeedback answer updatedAt createdAt')
     .lean();
 
   return rows.map((h: any) => ({
     id: String(h._id),
     questionId: String(h.questionId),
     question: h.questionSnapshot?.question || '',
-    topic: h.questionSnapshot?.topic || '',
+    topic: h.isCoding ? 'Coding' : h.questionSnapshot?.topic || '',
     subtopic: h.questionSnapshot?.subtopic || '',
     concepts: h.questionSnapshot?.concepts || [],
     difficulty: h.questionSnapshot?.difficulty || '',

@@ -125,10 +125,16 @@ export default function TodaySessionPage() {
       flat.sort((a, b) => a.order - b.order);
       setQuestions(flat);
 
+      const requestedQuestionId = new URLSearchParams(window.location.search).get('questionId');
+      const requestedQuestionIndex = requestedQuestionId
+        ? flat.findIndex((question) => question.id === requestedQuestionId)
+        : -1;
       const firstUnanswered = flat.findIndex((q) => !['answered', 'reviewed', 'skipped'].includes(q.status));
       // Stay on a real question even when everything is done: the navigation
       // controls and dots must keep working instead of the card vanishing.
-      setCurrentIndex(firstUnanswered === -1 ? Math.max(flat.length - 1, 0) : firstUnanswered);
+      setCurrentIndex(requestedQuestionIndex >= 0
+        ? requestedQuestionIndex
+        : firstUnanswered === -1 ? Math.max(flat.length - 1, 0) : firstUnanswered);
       return detail;
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Failed to load today\u2019s session');

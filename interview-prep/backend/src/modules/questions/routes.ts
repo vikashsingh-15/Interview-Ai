@@ -22,7 +22,13 @@ router.get(
 
     const filter: Record<string, any> = { isHidden: false, isDeprecated: false, qualityStatus: 'approved', 'practiceSource.kind': { $exists: false },
       $or: [{ ownerUserId: { $exists: false }, provenance: 'CURATED' }, { ownerUserId: req.user.id }] };
-    if (topic && typeof topic === 'string') filter.topic = topic;
+    if (topic && typeof topic === 'string') {
+      if (topic.toLowerCase() === 'coding') filter.isCoding = true;
+      else {
+        filter.topic = topic;
+        filter.isCoding = { $ne: true };
+      }
+    }
     if (difficulty && typeof difficulty === 'string') filter.difficulty = difficulty;
 
     const questions = await Question.find(filter)

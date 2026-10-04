@@ -248,8 +248,14 @@ export default function CalendarPage() {
 
                     {/* Entries */}
                     <div className="space-y-2 max-h-[28rem] overflow-y-auto pr-1">
-                      {dayRecord.entries.map((entry) => (
-                        <EntryRow key={entry.id} entry={entry} />
+                      {dayRecord.entries.map((entry, index) => (
+                        <EntryRow
+                          key={
+                            entry.id ||
+                            `${dayRecord.dateKey}:${entry.metadata?.questionId || entry.type}:${entry.title}:${index}`
+                          }
+                          entry={entry}
+                        />
                       ))}
                     </div>
                   </>

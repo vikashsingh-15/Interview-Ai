@@ -261,7 +261,7 @@ router.get(
           score: e.score,
           answer: e.answer,
           // Lets the history page fetch or generate this question's answer.
-          questionId: e.metadata?.questionId || resolvedQuestionIds.get(`${record.dateKey}:${e.title.trim().toLowerCase()}`),
+          questionId: e.metadata?.questionId || resolvedQuestionIds.get(`${record.dateKey}:${e.title.trim().replace(/\s+/g, ' ').toLowerCase()}`),
           occurredAt: e.occurredAt,
         })),
       };

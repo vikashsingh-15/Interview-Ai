@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [regenerating, setRegenerating] = useState(false);
   const [regenNote, setRegenNote] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
   const regenerateToday = async () => {
     if (regenerating) return;
@@ -379,7 +380,10 @@ export default function DashboardPage() {
           <div className="mb-8">
             <h2 className="text-xl font-semibold text-brand-primary mb-4">Today&apos;s Sections</h2>
             <div className="grid gap-6 md:grid-cols-2">
-              {(session?.sections ?? []).map((section) => (
+              {(session?.sections ?? []).map((section) => {
+                const isExpanded = !!expandedSections[section.id];
+                const visibleQuestions = isExpanded ? section.questions : section.questions.slice(0, 3);
+                return (
                 <Card key={section.id} className={cn(
                   'card-hover',
                   section.status === 'completed' && 'border-emerald-200',
@@ -388,7 +392,15 @@ export default function DashboardPage() {
                   <CardContent className="p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-brand-primary">{section.title}</h3>
+                        <button
+                          type="button"
+                          className="text-left text-lg font-semibold text-brand-primary hover:text-brand-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-secondary rounded"
+                          aria-expanded={isExpanded}
+                          aria-controls={`section-questions-${section.id}`}
+                          onClick={() => setExpandedSections((current) => ({ ...current, [section.id]: !current[section.id] }))}
+                        >
+                          {section.title}
+                        </button>
                         {section.description && (
                           <p className="text-sm text-brand-textSecondary">{section.description}</p>
                         )}
@@ -423,9 +435,15 @@ export default function DashboardPage() {
                     />
 
                     {section.questions && section.questions.length > 0 && (
-                      <div className="mt-4 space-y-2">
-                        {section.questions.slice(0, 3).map((question) => (
-                          <div key={question.id} className="flex items-center justify-between py-2 border-b border-brand-border last:border-0">
+                      <div id={`section-questions-${section.id}`} className="mt-4 space-y-2">
+                        {visibleQuestions.map((question) => (
+                          <button
+                            type="button"
+                            key={question.id}
+                            className="w-full flex items-center justify-between gap-3 py-2 border-b border-brand-border last:border-0 text-left hover:bg-brand-background/70 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-secondary"
+                            onClick={() => router.push(`/sessions/today?questionId=${encodeURIComponent(question.id)}`)}
+                            aria-label={`Open question: ${question.question}`}
+                          >
                             <div className="flex items-center gap-2 min-w-0">
                               <span className={cn(
                                 'w-2 h-2 rounded-full',
@@ -442,18 +460,23 @@ export default function DashboardPage() {
                                 {Math.round(question.finalScore * 100)}%
                               </span>
                             )}
-                          </div>
+                          </button>
                         ))}
                         {section.questions.length > 3 && (
-                          <p className="text-sm text-brand-textSecondary text-center pt-2">
-                            +{section.questions.length - 3} more questions
-                          </p>
+                          <button
+                            type="button"
+                            className="w-full text-sm text-brand-textSecondary text-center pt-2 hover:text-brand-secondary"
+                            aria-expanded={isExpanded}
+                            onClick={() => setExpandedSections((current) => ({ ...current, [section.id]: !current[section.id] }))}
+                          >
+                            {isExpanded ? 'Show fewer questions' : `+${section.questions.length - 3} more questions`}
+                          </button>
                         )}
                       </div>
                     )}
                   </CardContent>
                 </Card>
-              ))}
+              );})}
             </div>
           </div>
         )}

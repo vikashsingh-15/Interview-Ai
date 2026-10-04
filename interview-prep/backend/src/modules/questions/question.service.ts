@@ -22,11 +22,16 @@ export const questionService = {
     } = {}
   ): Promise<IQuestion[]> {
     const filter: any = {
-      topic,
       isHidden: false,
       isDeprecated: false,
       qualityStatus: 'approved',
     };
+
+    if (topic.toLowerCase() === 'coding') filter.isCoding = true;
+    else {
+      filter.topic = topic;
+      filter.isCoding = { $ne: true };
+    }
 
     if (options.subtopic) {
       filter.subtopic = options.subtopic;

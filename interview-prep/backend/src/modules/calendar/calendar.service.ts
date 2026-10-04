@@ -5,8 +5,13 @@ import DailyRecord, {
   IDailyRecordEntry,
   DailyRecordEntryType,
 } from './daily-record.model';
-import { DailySession } from '../sessions/daily-session.model';
+import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
+import { QuestionHistory } from '../questions/question-history.model';
 import { ValidationError } from '../../common/filters/error-filter';
+
+function normalizeQuestionTitle(title: string): string {
+  return title.trim().replace(/\s+/g, ' ').toLowerCase();
+}
 
 /**
  * Calendar service
@@ -39,7 +44,7 @@ function toDailyRecordEntry(
             ? 'revision'
             : 'technical',
     title: snapshot.question || sq.title || 'Question',
-    topic: snapshot.topic,
+    topic: snapshot.isCoding ? 'Coding' : snapshot.topic,
     subtopic: snapshot.subtopic,
     concepts: snapshot.concepts || [],
     difficulty: snapshot.difficulty,
@@ -179,7 +184,7 @@ export const calendarService = {
     if (record) {
       const ids = await resolveQuestionIdsForRecords(userId, [record]);
       for (const entry of record.entries) {
-        const key = `${record.dateKey}:${entry.title.trim().toLowerCase()}`;
+        const key = `${record.dateKey}:${normalizeQuestionTitle(entry.title)}`;
         const questionId = ids.get(key);
         if (questionId && !entry.metadata?.questionId) {
           entry.metadata = { ...(entry.metadata || {}), questionId };
@@ -322,25 +327,56 @@ export function recomputeTotals(record: IDailyRecordDocument): void {
 /** Resolve IDs for legacy calendar entries from the user's own daily sessions. */
 export async function resolveQuestionIdsForRecords(userId: string, records: Array<{ dateKey: string; entries: Array<{ title: string; metadata?: Record<string, any> }> }>) {
   if (!records.length) return new Map<string, string>();
+  const userObjectId = new mongoose.Types.ObjectId(userId);
   const dates = records.map(record => new Date(`${record.dateKey}T00:00:00.000Z`).getTime());
   const first = Math.min(...dates), last = Math.max(...dates);
   const sessions = await DailySession.find({
-    userId: new mongoose.Types.ObjectId(userId),
+    userId: userObjectId,
     sessionDate: { $gte: new Date(first), $lt: new Date(last + 24 * 60 * 60 * 1000) },
-    isDeleted: false,
-  }).populate({ path: 'sections.questions', model: 'SessionQuestion', select: 'questionId questionSnapshot' }).lean();
+    // Legacy sessions may predate this field; only explicitly deleted sessions are excluded.
+    isDeleted: { $ne: true },
+  }).select('_id sessionDate').lean();
   const byDateAndTitle = new Map<string, string>();
-  for (const session of sessions as any[]) {
-    const dateKey = DailyRecord.getDateKey(new Date(session.sessionDate));
-    for (const section of session.sections || []) for (const question of section.questions || []) {
-      if (question?.questionId && question?.questionSnapshot?.question) {
-        byDateAndTitle.set(`${dateKey}:${question.questionSnapshot.question.trim().toLowerCase()}`, String(question.questionId));
+  const sessionDateById = new Map((sessions as any[]).map(session => [String(session._id), new Date(session.sessionDate)]));
+  if (sessionDateById.size) {
+    // Sections reference Question IDs, while the per-session snapshots live in
+    // SessionQuestion. Query that collection directly to recover every legacy
+    // calendar entry, including questions that have never been answered.
+    const sessionQuestions = await SessionQuestion.find({ sessionId: { $in: [...sessionDateById.keys()] } })
+      .select('sessionId questionId questionSnapshot.question').lean();
+    for (const question of sessionQuestions as any[]) {
+      const sessionDate = sessionDateById.get(String(question.sessionId));
+      const title = question.questionSnapshot?.question;
+      if (sessionDate && question.questionId && title) {
+        const dateKey = DailyRecord.getDateKey(sessionDate);
+        byDateAndTitle.set(`${dateKey}:${normalizeQuestionTitle(title)}`, String(question.questionId));
       }
     }
   }
   for (const record of records) for (const entry of record.entries || []) {
-    const key = `${record.dateKey}:${entry.title.trim().toLowerCase()}`;
+    const key = `${record.dateKey}:${normalizeQuestionTitle(entry.title)}`;
     if (!byDateAndTitle.has(key) && entry.metadata?.questionId) byDateAndTitle.set(key, String(entry.metadata.questionId));
+  }
+
+  // Some imported/older calendar entries have no matching daily-session mapping.
+  // Recover IDs only from this user's own saved question history.
+  const unresolved = records.flatMap(record => (record.entries || [])
+    .filter(entry => entry.type !== 'search' && !byDateAndTitle.has(`${record.dateKey}:${normalizeQuestionTitle(entry.title)}`))
+    .map(entry => ({ dateKey: record.dateKey, title: entry.title, key: `${record.dateKey}:${normalizeQuestionTitle(entry.title)}` })));
+  if (unresolved.length) {
+    // Match normalized titles in memory so casing and whitespace differences
+    // in imported/legacy snapshots do not hide controls in Calendar or History.
+    const histories = await QuestionHistory.find({ userId: userObjectId })
+      .sort({ updatedAt: -1 }).select('questionId questionSnapshot.question').lean();
+    const idByTitle = new Map<string, string>();
+    for (const history of histories as any[]) {
+      const title = history.questionSnapshot?.question;
+      if (title && !idByTitle.has(normalizeQuestionTitle(title))) idByTitle.set(normalizeQuestionTitle(title), String(history.questionId));
+    }
+    for (const entry of unresolved) {
+      const questionId = idByTitle.get(normalizeQuestionTitle(entry.title));
+      if (questionId) byDateAndTitle.set(entry.key, questionId);
+    }
   }
   return byDateAndTitle;
 }
