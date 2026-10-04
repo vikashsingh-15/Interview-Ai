@@ -9,11 +9,13 @@ frontend/node_modules/
 dist/
 .build/
 .next/
+.next-production/
 /out/
 
 # One private local env file. Never commit credentials.
 .env
 .env.*
+!.env.example
 
 # Local MongoDB data directory (in-memory runner for development)
 backend/mongodb-data/
@@ -42,6 +44,8 @@ Thumbs.db
 
 # Testing
 coverage/
+test-results/
+playwright-report/
 .nyc_output/
 *.tsbuildinfo
 

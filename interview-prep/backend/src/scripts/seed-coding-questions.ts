@@ -1,6 +1,5 @@
 import mongoose from 'mongoose';
 import config from '../config';
-import logger from '../config/logger';
 import { CodingProblem } from '../modules/coding/coding-problem.model';
 
 /** Minimal statement built from the curated metadata when none was supplied. */

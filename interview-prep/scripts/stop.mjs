@@ -7,6 +7,19 @@
  * file save and makes the port look permanently occupied.
  */
 import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..').toLowerCase();
+
+// A listening port is not proof of ownership. If inspection fails, leave it alone.
+function ownedProcess(pid) {
+  const result = spawnSync('powershell', ['-NoProfile', '-Command',
+    `Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}" | Select-Object CommandLine | ConvertTo-Json -Compress`],
+  { encoding: 'utf8', windowsHide: true });
+  if (result.status !== 0) return false;
+  try { return String(JSON.parse(result.stdout)?.CommandLine || '').toLowerCase().includes(projectRoot); }
+  catch { return false; }
+}
 
 const PORTS = [
   { port: 27017, name: 'mongod' },
@@ -47,6 +60,11 @@ for (const { port, name } of PORTS) {
     continue;
   }
   for (const pid of pids) {
+    if (!ownedProcess(pid)) {
+      console.error(`[${name}] leaving pid ${pid} alone: project ownership could not be verified`);
+      process.exitCode = 1;
+      continue;
+    }
     if (stop(pid)) {
       stopped += 1;
       console.log(`[${name}] stopped pid ${pid} on ${port}`);

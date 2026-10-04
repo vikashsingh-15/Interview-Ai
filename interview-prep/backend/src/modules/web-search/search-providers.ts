@@ -209,7 +209,6 @@ async function searchWithStackExchange(query: string, limit: number): Promise<Se
     const items: any[] = Array.isArray(data.items) ? data.items : [];
 
     // Fetch accepted/answer bodies for the questions that have them
-    const questionIds = items.map((i) => i.question_id).filter(Boolean).slice(0, 10);
     const acceptedAnswers: Record<string, any> = {};
     const answerIds = items.map((i) => i.accepted_answer_id).filter(Boolean);
     if (answerIds.length > 0) {

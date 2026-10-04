@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { structuredAI } from '../../common/services/structured-ai';
 import OpenAI from 'openai';
 import { createAIClient, hasAI } from '../../common/services/ai-provider';
-import config from '../../config';
 import logger from '../../config/logger';
 
 /**

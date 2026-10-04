@@ -399,7 +399,7 @@ projectSchema.virtual('completionPercentage').get(function() {
   ];
 
   let completeSections = 0;
-  const tree = this.interviewTree as any;
+  const tree = (this.interviewTree || {}) as any;
   for (const section of treeSections) {
     const sectionData = tree[section];
     if (sectionData && Object.values(sectionData).some((v: any) => v && (typeof v === 'string' ? v.length > 0 : v.length > 0))) {

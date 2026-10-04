@@ -49,6 +49,9 @@ export interface IDailyRecord {
 
   userId: mongoose.Types.ObjectId;
 
+  /** Which resume profile this record belongs to (if any) */
+  resumeProfileId?: mongoose.Types.ObjectId;
+
   /** Midnight UTC of the day this record covers */
   date: Date;
   /** e.g. 2026-09-27 (UTC) — unique per user */
@@ -132,6 +135,7 @@ const dailyRecordSchema = new Schema<IDailyRecord>(
       required: true,
       index: true,
     },
+    resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile' },
     date: { type: Date, required: true },
     dateKey: { type: String, required: true },
 

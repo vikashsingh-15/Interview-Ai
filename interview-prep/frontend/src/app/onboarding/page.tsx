@@ -92,6 +92,15 @@ export default function OnboardingPage() {
             :<><label className="block">Project name<input className={inputStyle} value={item.name} onChange={e=>updateEntry(kind,i,{name:e.target.value})} /></label>
             <label className="block">Description<textarea className={inputStyle} value={item.description} onChange={e=>updateEntry(kind,i,{description:e.target.value})} /></label></>}
           <label className="block">Technologies / tools (comma-separated)<input className={inputStyle} value={(item.technologies || []).join(', ')} onChange={e=>updateEntry(kind,i,{technologies:list(e.target.value)})} /></label>
+          {kind === 'projects' && <label className="block">Your role<input className={inputStyle} value={item.role || ''} onChange={e=>updateEntry(kind,i,{role:e.target.value})} /></label>}
+          <div className="grid grid-cols-2 gap-3">
+            <label>Start date<input type="date" className={inputStyle} value={(item.startDate || '').slice(0,10)} onChange={e=>updateEntry(kind,i,{startDate:e.target.value || undefined})} /></label>
+            <label>End date<input type="date" className={inputStyle} value={(item.endDate || '').slice(0,10)} onChange={e=>updateEntry(kind,i,{endDate:e.target.value || undefined})} /></label>
+          </div>
+          {kind === 'experience' && <>
+            <label className="block"><input type="checkbox" checked={item.currentRole || false} onChange={e=>updateEntry(kind,i,{currentRole:e.target.checked,endDate:e.target.checked?undefined:item.endDate})} /> Current role</label>
+            <label className="block">Related project names (one per line)<textarea className={inputStyle} value={(item.projectReferences || []).join('\n')} onChange={e=>updateEntry(kind,i,{projectReferences:e.target.value.split('\n').filter(Boolean)})} /></label>
+          </>}
           <label className="block">Your contribution (one per line)<textarea className={inputStyle} value={(item.responsibilities || []).join('\n')} onChange={e=>updateEntry(kind,i,{responsibilities:e.target.value.split('\n').filter(Boolean)})} /></label>
           {(kind==='projects'?['architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features']:['achievements','technicalClaims']).map(field=><label key={field} className="block text-sm">{field.replace(/([A-Z])/g,' $1')} (one per line)
             <textarea className={inputStyle} value={(item[field] || []).join('\n')} onChange={e=>updateEntry(kind,i,{[field]:e.target.value.split('\n').filter(Boolean)})} />
@@ -106,8 +115,9 @@ export default function OnboardingPage() {
           :{company:'',role:'',technologies:[],responsibilities:[],isConfirmed:false,isRemoved:false}]});}}>Add {kind==='projects'?'project':'experience'}</button>
       </div>)}
       <button className={buttonStyle} disabled={busy} onClick={()=>act(async()=>{
-        await api.put('/profile/review',{fullName:facts.fullName,currentRole:facts.currentRole,totalExperienceMonths:months,
+        const saved = await api.put('/profile/review',{fullName:facts.fullName,currentRole:facts.currentRole,totalExperienceMonths:months,
           skills:facts.skills,experience:facts.experience,projects:facts.projects});
+        setFacts(saved.data.data);
         setReviewed(true);setMessage('Review saved. Only confirmed entries will personalize questions.');
         if (!plan.length) setPlan([{title:'Professional practice',topic:facts.skills.find((s:any)=>s.isConfirmed&&!s.isRemoved)?.name || facts.currentRole || 'Professional experience',type:'technical',count:5}]);
       })}>Save reviewed facts</button>

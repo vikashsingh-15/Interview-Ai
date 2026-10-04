@@ -6,7 +6,6 @@ import { runWebSearch, scrapePage } from './search-providers';
 import { synthesizeAnswer } from './answer-synthesis';
 import { WebSearchResponse, SearchResult, ExtractedPageContent } from './web-search.types';
 import { recordQuestionInDailyCalendar } from '../calendar/calendar.service';
-import { calendarService } from '../calendar/calendar.service';
 
 /**
  * Web search service

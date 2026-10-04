@@ -92,7 +92,6 @@ const userSchema = new Schema<IUser>(
 );
 
 // Indexes
-userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ isAccountDeleted: 1, emailVerificationToken: 1 });
 
 // Virtual for full name

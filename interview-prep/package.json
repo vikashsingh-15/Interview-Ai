@@ -14,13 +14,14 @@
     "build:frontend": "cd frontend && npm run build",
     "start": "cd backend && npm start",
     "start:frontend": "cd frontend && npm start",
-    "test": "npm run test:unit && npm run test:integration",
+    "test": "npm --prefix backend test -- --runInBand",
     "test:unit": "cd backend && npm run test:unit",
     "test:integration": "cd backend && npm run test:integration",
     "test:e2e": "cd frontend && npm run test:e2e",
-    "lint": "cd backend && npm run lint && cd frontend && npm run lint",
+    "lint": "npm --prefix backend run lint && npm --prefix frontend run lint",
     "setup": "npm install && cd backend && npm install && cd ../frontend && npm install",
-    "seed:all": "cd backend && npm run seed:all"
+    "seed:all": "cd backend && npm run seed:all",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck"
   },
   "keywords": [
     "interview",

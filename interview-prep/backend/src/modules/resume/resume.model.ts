@@ -97,13 +97,16 @@ resumeVersionSchema.index({ userId: 1, versionNumber: 1 }, { unique: true });
 resumeVersionSchema.index({ userId: 1, storageKey: 1 });
 
 // Resume Schema
+// One resume document per uploaded resume (user may have multiple).
+// NOTE: userId is NOT unique here. Multiple Resume documents may share a
+// userId so a user can upload and manage several resumes (e.g. a SE role,
+// a DevOps role) and select the one that drives the next session.
 const resumeSchema = new Schema<IResume>(
   {
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      unique: true,
       index: true,
     },
     currentVersionId: {
@@ -134,7 +137,6 @@ const resumeSchema = new Schema<IResume>(
   }
 );
 
-resumeSchema.index({ userId: 1 }, { unique: true });
 resumeSchema.index({ userId: 1, isDeleted: 1 });
 
 // Methods

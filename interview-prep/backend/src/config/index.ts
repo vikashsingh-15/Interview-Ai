@@ -11,6 +11,7 @@ export const config = {
   nodeEnv: env, isDevelopment: env === 'development', isProduction: env === 'production', isTest: env === 'test',
   port: Number(process.env.PORT || 3001),
   host: env === 'production' ? '0.0.0.0' : 'localhost',
+  trustProxyHops: Number(process.env.TRUST_PROXY_HOPS ?? (env === 'production' ? 1 : 0)),
   database: {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/interview-prep-dev',
     options: { maxPoolSize:10, serverSelectionTimeoutMS:5000, socketTimeoutMS:45000 },

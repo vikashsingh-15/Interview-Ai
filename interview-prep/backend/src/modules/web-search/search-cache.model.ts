@@ -1,5 +1,5 @@
 import mongoose, { Schema, Model, Document } from 'mongoose';
-import { SearchProviderName, SearchResult, ExtractedPageContent, SynthesizedAnswer } from './web-search.types';
+import { SearchProviderName, SynthesizedAnswer } from './web-search.types';
 
 /**
  * SearchCache

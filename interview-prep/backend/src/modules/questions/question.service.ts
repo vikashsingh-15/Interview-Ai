@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { Question, IQuestion } from './question.model';
 import { QuestionHistory } from './question-history.model';
-import { BadRequestError, NotFoundError } from '../../common/filters/error-filter';
+import { BadRequestError } from '../../common/filters/error-filter';
 
 // Question service
 export const questionService = {

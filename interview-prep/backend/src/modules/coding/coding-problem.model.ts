@@ -187,7 +187,6 @@ const codingProblemSchema = new Schema<ICodingProblem>(
 codingProblemSchema.index({ platform: 1, problemId: 1 }, { unique: true, partialFilterExpression: { platform: { $in: ['leetcode', 'hackerrank', 'codeforces', 'atcoder'] } } });
 codingProblemSchema.index({ difficulty: 1, isInterviewRelevant: 1 });
 codingProblemSchema.index({ platform: 1, isInterviewRelevant: 1 });
-codingProblemSchema.index({ pattern: 1 });
 codingProblemSchema.index({ tags: 1 });
 codingProblemSchema.index({ relatedTopics: 1 });
 codingProblemSchema.index({ isHidden: 1, isDeprecated: 1, isInterviewRelevant: 1 });

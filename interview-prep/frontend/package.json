@@ -7,9 +7,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "test": "jest",
-    "test:e2e": "playwright test"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "npm run test:e2e",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@types/node": "^20.10.6",
@@ -36,5 +37,8 @@
     "next": {
       "postcss": "8.5.28"
     }
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

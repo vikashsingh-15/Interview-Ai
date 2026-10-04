@@ -188,7 +188,6 @@ const marketSourceSchema = new Schema<IMarketSource>(
 );
 
 // Indexes
-marketSourceSchema.index({ url: 1 }, { unique: true });
 marketSourceSchema.index({ sourceType: 1 });
 marketSourceSchema.index({ company: 1 });
 marketSourceSchema.index({ role: 1 });

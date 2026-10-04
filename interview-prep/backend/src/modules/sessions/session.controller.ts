@@ -4,7 +4,6 @@ import { asyncHandler, NotFoundError } from '../../common/filters/error-filter';
 import { sessionService } from './session.service';
 import { DailySession } from './daily-session.model';
 import mongoose from 'mongoose';
-import { z } from 'zod';
 
 const router = Router();
 
@@ -218,6 +217,34 @@ router.post('/:sessionId/questions/:questionId/generate-answer', authenticate,
     res.json({ success:true, data: answer });
   }))
 
+// Answer for a bank question by id alone — used by the calendar page where a
+// row may not belong to today's session (e.g. topic practice). Reuses the
+// same shared answer generator as every other surface.
+router.get('/question/:questionId/answer', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { Question } = await import('../questions/question.model');
+    const { getOrCreateQuestionAnswer } = await import('../questions/answer.service');
+    const { NotFoundError, ValidationError } = await import('../../common/filters/error-filter');
+    if (!mongoose.Types.ObjectId.isValid(req.params.questionId)) throw new ValidationError('Invalid question id');
+    const question = await Question.findById(req.params.questionId);
+    if (!question) throw new NotFoundError('Question not found');
+    const answer = await getOrCreateQuestionAnswer({ question, userId: req.user!.id });
+    res.json({ success:true, data: answer });
+  }))
+
+// Same as above but forces a fresh generation even when an answer is cached.
+router.post('/question/:questionId/generate-answer', authenticate,
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { Question } = await import('../questions/question.model');
+    const { getOrCreateQuestionAnswer } = await import('../questions/answer.service');
+    const { NotFoundError, ValidationError } = await import('../../common/filters/error-filter');
+    if (!mongoose.Types.ObjectId.isValid(req.params.questionId)) throw new ValidationError('Invalid question id');
+    const question = await Question.findById(req.params.questionId);
+    if (!question) throw new NotFoundError('Question not found');
+    const answer = await getOrCreateQuestionAnswer({ question, userId: req.user!.id, regenerate: true });
+    res.json({ success:true, data: answer });
+  }))
+
 router.post('/:sessionId/questions/:questionId/review', authenticate,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
     const completedQuestions = await sessionService.markQuestionReviewed(req.params.sessionId, req.params.questionId, req.user!.id);
@@ -393,11 +420,6 @@ router.get(
 
     const targetDate = new Date(firstSessionDate.sessionDate);
     targetDate.setDate(targetDate.getDate() + parseInt(dayNumber, 10) - 1);
-
-    const session = await sessionService.getSessionById(
-      (await sessionService.getTodaysSession(req.user.id))?.sessionDate?.toString() || '',
-      req.user.id
-    );
 
     // Find session by date
     const sessionByDate = await DailySession.findOne({

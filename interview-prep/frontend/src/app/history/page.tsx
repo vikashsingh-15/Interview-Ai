@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/Progress';
 import api, { ApiResponse } from '@/lib/api';
 import { PastQuestionDay } from '@/types';
+import { AnswerView, RevealedAnswer } from '@/components/features/AnswerView';
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   technical: { label: 'Technical', color: 'bg-brand-secondary' },
@@ -44,6 +45,8 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [markedIds, setMarkedIds] = useState<Set<string>>(new Set());
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<Record<string, RevealedAnswer>>({});
+  const [answerLoading, setAnswerLoading] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -65,6 +68,22 @@ export default function HistoryPage() {
       load();
     }
   }, [isAuthenticated, load]);
+
+  const revealAnswer = async (questionId: string, regenerate: boolean) => {
+    if (answerLoading) return;
+    setAnswerLoading(questionId);
+    setError(null);
+    try {
+      const res = regenerate
+        ? await api.post(`/sessions/question/${questionId}/generate-answer`)
+        : await api.get(`/sessions/question/${questionId}/answer`);
+      setAnswers((prev) => ({ ...prev, [questionId]: res.data.data }));
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Could not load the answer. Try again.');
+    } finally {
+      setAnswerLoading(null);
+    }
+  };
 
   const markKnown = async (entryId: string, title: string, date: string) => {
     try {
@@ -241,6 +260,34 @@ export default function HistoryPage() {
                                   </span>
                                 )}
                               </div>
+
+                              {/* Show / generate this question's interview answer. */}
+                              {entry.questionId && entry.type !== 'search' && (
+                                <div className="mt-2">
+                                  {!answers[entry.questionId] ? (
+                                    <div className="flex gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        isLoading={answerLoading === entry.questionId}
+                                        onClick={() => revealAnswer(entry.questionId!, false)}
+                                      >
+                                        Show answer
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        isLoading={answerLoading === entry.questionId}
+                                        onClick={() => revealAnswer(entry.questionId!, true)}
+                                      >
+                                        Generate answer
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <AnswerView answer={answers[entry.questionId]} hint={{ difficulty: entry.difficulty }} />
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             {/* Mark-done button */}

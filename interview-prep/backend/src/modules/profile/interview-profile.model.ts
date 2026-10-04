@@ -180,7 +180,6 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
-      unique: true,
       index: true,
     },
     resumeProfileId: {
@@ -189,6 +188,8 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
       required: true,
       index: true,
     },
+  // One interview profile per resume; removed the old unique userId index
+  // so a user can have multiple interview profiles (one per resume).
 
     // Generated from resume + user input
     experienceLevel: {
@@ -257,8 +258,8 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
   }
 );
 
-// Indexes
-interviewProfileSchema.index({ userId: 1 }, { unique: true });
+// Indexes (userId is no longer unique: a user can have multiple interview profiles,
+// one per resume profile)
 interviewProfileSchema.index({ userId: 1, onboardingCompleted: 1 });
 
 // Static methods

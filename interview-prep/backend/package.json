@@ -15,7 +15,8 @@
     "seed:coding": "ts-node src/scripts/seed-coding-questions.ts",
     "seed:all": "npm run seed && npm run seed:coding",
     "migrate": "ts-node src/scripts/migrate.ts",
-    "migrate:resume-storage": "ts-node src/scripts/migrate-resume-storage.ts"
+    "migrate:resume-storage": "ts-node src/scripts/migrate-resume-storage.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "interview",
@@ -66,5 +67,8 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

@@ -29,6 +29,7 @@ import marketCalibrationRoutes from './modules/market-calibration/routes';
 import analyticsRoutes from './modules/analytics/routes';
 import webSearchRoutes from './modules/web-search/routes';
 import calendarRoutes from './modules/calendar/routes';
+import topicPracticeRoutes from './modules/topics/routes';
 
 
 
@@ -40,6 +41,7 @@ import './modules/analytics/progress-analytics.model';
 import feedbackRoutes from './modules/questions/feedback.routes';
 import adminRoutes from './modules/questions/admin.routes';
 const app = express();
+app.set('trust proxy', config.trustProxyHops);
 app.set('etag', false);
 
 // Security middleware
@@ -88,7 +90,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use('/api', rateLimiter);
+app.use('/api', (req, res, next) => req.path === '/health' ? next() : rateLimiter(req, res, next));
 
 // Never log OAuth codes, states, verification/reset tokens or query strings.
 morgan.token('safe-path', req => (req as express.Request).path);
@@ -124,6 +126,7 @@ app.use('/api/market-calibration', marketCalibrationRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/search', webSearchRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/topics', topicPracticeRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import mongoose from 'mongoose';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
 import { calendarService } from './calendar.service';

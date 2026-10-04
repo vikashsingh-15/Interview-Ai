@@ -23,6 +23,11 @@ export interface IQuestionHistory {
   questionId: mongoose.Types.ObjectId;
   questionVersion: number;
 
+  /** Resume profile active when this question was served (topic practice). */
+  resumeProfileId?: mongoose.Types.ObjectId;
+  /** True when the row came from topic-wise practice rather than a daily session. */
+  isTopicPractice?: boolean;
+
   // Session context
   sessionId?: mongoose.Types.ObjectId;
   sessionDate?: Date;
@@ -47,6 +52,7 @@ export interface IQuestionHistory {
     expectedAnswerDepth: AnswerDepth;
     estimatedAnswerTimeSeconds: number;
     provenance: Provenance;
+    practiceSource?: { kind: 'project' | 'experience'; id: string; label: string };
   };
 
   // Answer
@@ -86,6 +92,7 @@ export interface IQuestionHistory {
   userNotes?: string;
   difficultyFeedback?: 'too_easy' | 'too_hard' | 'just_right' | 'already_knew' | 'duplicate' | 'not_relevant' | 'incorrect';
   feedback?: string;
+  feedbackNotes?: string;
 
   // Scoring
   selfAssessedScore?: number;
@@ -132,6 +139,10 @@ const questionHistorySchema = new Schema<IQuestionHistory>(
       default: 1,
     },
 
+    // Resume profile + origin tagging
+    resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile', index: true },
+    isTopicPractice: { type: Boolean, default: false, index: true },
+
     // Session context
     sessionId: {
       type: Schema.Types.ObjectId,
@@ -150,6 +161,7 @@ const questionHistorySchema = new Schema<IQuestionHistory>(
 
     // Question snapshot (denormalized for history)
     questionSnapshot: {
+      practiceSource: { kind: String, id: String, label: String },
       question: { type: String, required: true },
       topic: { type: String, required: true },
       subtopic: { type: String, required: true },
@@ -232,6 +244,7 @@ const questionHistorySchema = new Schema<IQuestionHistory>(
       enum: ['too_easy', 'too_hard', 'just_right', 'already_knew', 'duplicate', 'not_relevant', 'incorrect'],
     },
     feedback: String,
+    feedbackNotes: String,
 
     // Scoring
     selfAssessedScore: Number,

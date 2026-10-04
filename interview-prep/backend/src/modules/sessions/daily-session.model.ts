@@ -75,6 +75,9 @@ export interface IDailySession {
   // User reference
   userId: mongoose.Types.ObjectId;
 
+  // Which resume profile drove this session (if any)
+  resumeProfileId?: mongoose.Types.ObjectId;
+
   // Session identification
   sessionDate: Date;
   userDayNumber: number;

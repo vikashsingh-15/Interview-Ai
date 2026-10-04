@@ -1,54 +1,24 @@
 import { randomUUID } from 'crypto';
-import { z } from 'zod';
-import { structuredAI } from '../../common/services/structured-ai';
-import { hasAI } from '../../common/services/ai-provider';
+import { getOrCreateQuestionAnswer, TopicPracticeAnswer } from '../questions/answer.service';
 
 import { generatePersonalizedQuestions, generateCodingQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
 import mongoose from 'mongoose';
-import config from '../../config';
 import logger from '../../config/logger';
 import { DailySession, SessionQuestion } from './daily-session.model';
 import { Question } from '../questions/question.model';
 import { QuestionHistory as QuestionHistoryModel } from '../questions/question-history.model';
 import { Revision } from '../revisions/revision.model';
-import ResumeProfile from '../resume/resume-profile.model';
 import { buildDailyPlan } from '../profile/daily-plan';
 import InterviewProfile from '../profile/interview-profile.model';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { NotFoundError, ConflictError, InternalError, RateLimitError } from '../../common/filters/error-filter';
-import { QuestionType, Difficulty, Provenance } from '../questions/question.model';
 import { calendarService, recordQuestionInDailyCalendar, recomputeTotals } from '../calendar/calendar.service';
 import DailyRecord from '../calendar/daily-record.model';
 import {
   evaluateAnswer,
   toRevisionEvaluation,
-  getOpenAIClient,
   EvaluationResult,
 } from '../evaluation/answer-evaluation';
-
-const interviewAnswerSchema = z.object({
-  direct:z.string().min(20).max(500),
-  questionFocus:z.string().min(15).max(350),
-  why:z.string().min(25).max(750),
-  how:z.string().min(35).max(1000),
-  example:z.string().min(35).max(850),
-  tradeOff:z.string().min(25).max(750),
-  summary:z.string().min(20).max(350),
-});
-
-// Rich, interview-ready detailed answer with depth suitable for Senior-level prep.
-const interviewAnswerDetailedSchema = z.object({
-  overview:z.string().min(40).max(1200),
-  keyPoints:z.array(z.string().min(8).max(250)).min(3).max(10),
-  algorithmOrApproach:z.string().min(40).max(1500),
-  complexity:z.string().min(20).max(500),
-  codeSketch:z.string().min(20).max(1500).optional(),
-  edgeCases:z.array(z.string().min(8).max(250)).min(1).max(6),
-  commonMistakes:z.array(z.string().min(8).max(250)).min(1).max(6),
-  whyItMatters:z.string().min(30).max(700),
-  followUpQuestions:z.array(z.string().min(10).max(250)).min(1).max(5),
-  summary:z.string().min(20).max(400),
-});
 
 const SESSION_TYPE_TO_CALENDAR: Record<string, string> = {
   technical: 'technical', system_design: 'system_design', coding: 'coding',
@@ -95,7 +65,7 @@ export async function syncSessionToCalendar(
         status: sq.status === 'answered' ? 'answered' : sq.status === 'skipped' ? 'skipped' : 'presented',
         count: 1,
         occurredAt,
-        metadata: { sessionQuestionId: String(sq._id) },
+        metadata: { sessionQuestionId: String(sq._id), questionId: String(sq.questionId) },
       };
       if (typeof sq.finalScore === 'number') entry.score = sq.finalScore;
       record.entries.push(entry);
@@ -475,97 +445,17 @@ export const sessionService = {
    * Used when the short answer is already cached but the detailed guide was not.
    * Also generates the detailed answer when the short answer is already cached.
    */
-  async getInterviewAnswer(sessionId: string, mappingId: string, userId: string): Promise<{
-    sections?: z.infer<typeof interviewAnswerSchema>; legacyAnswer?: string; detailed?: z.infer<typeof interviewAnswerDetailedSchema>;
-  }> {
-    const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
+  async getInterviewAnswer(sessionId: string, mappingId: string, userId: string): Promise<TopicPracticeAnswer> {
+    const session = await DailySession.findOne({ _id: sessionId, userId, isDeleted: false });
     if (!session) throw new NotFoundError('Session not found');
-    const mapped = await SessionQuestion.findOne({ _id:mappingId, sessionId });
+    const mapped = await SessionQuestion.findOne({ _id: mappingId, sessionId });
     if (!mapped) throw new NotFoundError('Question not found in session');
     const question = await Question.findById(mapped.questionId);
     if (!question) throw new NotFoundError('Question not found');
     if (mapped.status === 'pending') {
-      await SessionQuestion.updateOne({ _id:mapped._id, status:'pending' }, { $set:{ status:'presented' } });
+      await SessionQuestion.updateOne({ _id: mapped._id, status: 'pending' }, { $set: { status: 'presented' } });
     }
-    const cached = interviewAnswerSchema.safeParse(question.interviewAnswerSections);
-    const cachedDetailed = question.interviewAnswerDetailed != null;
-    if (cached.success && cachedDetailed) return { sections:cached.data, detailed:question.interviewAnswerDetailed };
-    if (cached.success && !cachedDetailed) {
-      // Have the short answer but not the detailed one: generate detailed from cache.
-      const detailed = await this.generateDetailedAnswer(userId, mapped, question, cached.data);
-      await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerDetailed:detailed } });
-      return { sections:cached.data, detailed };
-    }
-    const reference = question.interviewAnswer || question.detailedAnswer || question.shortAnswer || question.codingProblem?.solutionCode || '';
-    if (!hasAI()) {
-      if (reference) {
-        // No AI provider configured: return the cached answer as plain text.
-        // The detailed answer from generation is stored on the question model
-        // and is shown to the user as the legacy answer.
-        return { legacyAnswer: reference };
-      }
-      throw new NotFoundError('An answer is not available for this question yet');
-    }
-    const shortSystemPrompt = 'Write a technically accurate, standard interview answer to the exact question. The direct field MUST answer the question in its first sentence. questionFocus defines the key terms and what the interviewer is asking. why gives the rationale. how explains concrete steps or mechanism. example gives one specific hypothetical scenario. tradeOff names a real limitation and when an alternative fits. summary closes in one sentence. Keep the spoken answer (direct, why, how, example, tradeOff, summary) about 140-200 words total, suitable for 60-90 seconds. Use a real number only if the reference supplies one; do not fabricate metrics or personal experience. Correct technical mistakes in the reference. Do not claim that the candidate implemented a system unless verified. For coding questions cover the algorithm, complexity and an edge case across the fields. Return a JSON object with string fields direct, questionFocus, why, how, example, tradeOff, summary.';
-    const detailedSystemPrompt = 'You are a senior technical interviewer preparing a candidate for a ' + (question.difficulty || 'intermediate') + ' ' + (question.questionType || 'technical') + ' interview question. Produce a complete, interview-ready detailed answer guide for the candidate to study. The answer must be technically accurate, specific, and suitable for a candidate targeting a Senior-level role. Do not claim the candidate implemented anything unless the reference says so. Cover the following in the fields below: - overview: a concise 2-4 sentence explanation of the core idea or approach. - keyPoints: 3-10 bullet-style statements capturing the essential concepts, mechanisms, or principles. - algorithmOrApproach: a step-by-step explanation of the algorithm, architecture, or reasoning approach. - complexity: time and space complexity (for coding), or key design trade-offs and scaling considerations (for system design). - codeSketch: for coding questions, a short pseudocode or language-agnostic sketch of the core approach (omit for non-coding). - edgeCases: 1-6 specific edge cases or pitfalls that a strong candidate should mention. - commonMistakes: 1-6 mistakes or weak answers that interviewers commonly see. - whyItMatters: why this question is asked and what it reveals about the candidate. - followUpQuestions: 1-5 likely follow-up questions the interviewer may ask. - summary: a one-sentence takeaway. Keep the full detailed answer focused and concrete; avoid filler and generic statements. Return a JSON object matching the schema exactly.';
-    const [shortResult, detailedResult] = await Promise.all([
-      structuredAI({ userId, purpose:'interview-answer', version:'answer-v2',
-        schema:interviewAnswerSchema,
-        context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
-          difficulty:question.difficulty, type:question.questionType },
-        system:shortSystemPrompt,
-      }),
-      structuredAI({ userId, purpose:'interview-answer-detailed', version:'answer-detailed-v1',
-        schema:interviewAnswerDetailedSchema,
-        context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
-          difficulty:question.difficulty, type:question.questionType, shortAnswer:null },
-        system:detailedSystemPrompt,
-      }),
-    ]);
-    await Question.updateOne({ _id:question._id }, { $set:{
-      interviewAnswerSections:shortResult,
-      interviewAnswerDetailed:detailedResult,
-    } });
-    return { sections:shortResult, detailed:detailedResult };
-  },
-  async generateDetailedAnswer(
-    userId: string,
-    mapped: any,
-    question: any,
-    shortAnswer: any,
-  ): Promise<any> {
-    if (question.interviewAnswerDetailed) return question.interviewAnswerDetailed;
-    const reference = question.interviewAnswer || question.detailedAnswer || question.shortAnswer || question.codingProblem?.solutionCode || '';
-    const systemPrompt = [
-      'You are a senior technical interviewer preparing a candidate for a ',
-      question.difficulty || 'intermediate',
-      ' ',
-      question.questionType || 'technical',
-      ' interview question. Produce a complete, interview-ready detailed answer guide for the candidate to study. The answer must be technically accurate, specific, and suitable for a candidate targeting a Senior-level role.',
-      'Do not claim the candidate implemented anything unless the reference says so.',
-      'Use the short answer below as a starting point and expand it into a richer study guide.',
-      'Cover the following in the fields below:',
-      '- overview: a concise 2-4 sentence explanation of the core idea or approach.',
-      '- keyPoints: 3-10 bullet-style statements capturing the essential concepts, mechanisms, or principles.',
-      '- algorithmOrApproach: a step-by-step explanation of the algorithm, architecture, or reasoning approach.',
-      '- complexity: time and space complexity (for coding), or key design trade-offs and scaling considerations (for system design).',
-      '- codeSketch: for coding questions, a short pseudocode or language-agnostic sketch of the core approach (omit for non-coding).',
-      '- edgeCases: 1-6 specific edge cases or pitfalls that a strong candidate should mention.',
-      '- commonMistakes: 1-6 mistakes or weak answers that interviewers commonly see.',
-      '- whyItMatters: why this question is asked and what it reveals about the candidate.',
-      '- followUpQuestions: 1-5 likely follow-up questions the interviewer may ask.',
-      '- summary: a one-sentence takeaway.',
-      'Keep the full detailed answer focused and concrete; avoid filler and generic statements.',
-      'Return a JSON object matching the schema exactly.',
-    ].join(' ');
-    const result = await structuredAI({ userId, purpose:'interview-answer-detailed', version:'answer-detailed-v1',
-      schema:interviewAnswerDetailedSchema,
-      context:{ question:mapped.questionSnapshot.question, reference, concepts:question.concepts,
-        difficulty:question.difficulty, type:question.questionType, shortAnswer },
-      system:systemPrompt,
-    });
-    await Question.updateOne({ _id:question._id }, { $set:{ interviewAnswerDetailed:result } });
-    return result;
+    return getOrCreateQuestionAnswer({ question, userId });
   },
   async markQuestionReviewed(sessionId: string, mappingId: string, userId: string): Promise<number> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
@@ -792,6 +682,7 @@ export const sessionService = {
       const updated = await calendarService.markEntryAnswered({
         userId,
         title: sessionQuestion.questionSnapshot.question,
+        questionId: String(sessionQuestion.questionId),
         score: sessionQuestion.finalScore,
         answer: answer.slice(0, 500),
       });
@@ -807,9 +698,8 @@ export const sessionService = {
           status: 'answered',
           score: sessionQuestion.finalScore,
           answer: answer.slice(0, 500),
-          metadata: sessionQuestion.isRevision
-            ? { revisionNumber: sessionQuestion.revisionNumber }
-            : undefined,
+          metadata: { questionId: String(sessionQuestion.questionId),
+            ...(sessionQuestion.isRevision ? { revisionNumber: sessionQuestion.revisionNumber } : {}) },
         });
       }
     } catch (calendarErr) {

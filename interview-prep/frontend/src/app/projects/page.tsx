@@ -22,6 +22,17 @@ interface PrepProject {
   keyDesignDecisions?: string[];
 }
 
+interface ExperienceEntry {
+  _id: string;
+  company: string;
+  role?: string;
+  currentRole?: boolean;
+  isConfirmed?: boolean;
+  technologies?: string[];
+  responsibilities?: string[];
+  achievements?: string[];
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   personal: 'Personal', work: 'Work', open_source: 'Open source',
   academic: 'Academic', freelance: 'Freelance', startup: 'Startup', other: 'Other',
@@ -30,12 +41,19 @@ const CATEGORY_LABELS: Record<string, string> = {
 export default function ProjectsPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [projects, setProjects] = useState<PrepProject[] | null>(null);
+  const [experiences, setExperiences] = useState<ExperienceEntry[]>([]);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (authLoading || !isAuthenticated) return;
-    api.get('/projects')
-      .then((res) => setProjects(Array.isArray(res.data.data) ? res.data.data : []))
+    Promise.all([
+      api.get('/projects'),
+      api.get('/topics/experience').catch(() => ({ data: { data: [] } })),
+    ])
+      .then(([projectRes, experienceRes]) => {
+        setProjects(Array.isArray(projectRes.data.data) ? projectRes.data.data : []);
+        setExperiences(Array.isArray(experienceRes.data.data) ? experienceRes.data.data : []);
+      })
       .catch(() => setFailed(true));
   }, [authLoading, isAuthenticated]);
 
@@ -114,7 +132,7 @@ export default function ProjectsPage() {
                       {p.keyDesignDecisions!.length} key design decision{p.keyDesignDecisions!.length === 1 ? '' : 's'} recorded
                     </p>
                   )}
-                  <Link href="/mock-interview">
+                  <Link href={`/practice/project/${p._id}`}>
                     <Button variant="secondary" className="w-full">Practice this project</Button>
                   </Link>
                 </CardContent>
@@ -122,6 +140,40 @@ export default function ProjectsPage() {
             ))}
           </div>
         )}
+
+        <section className="mt-10" aria-labelledby="experience-heading">
+          <h2 id="experience-heading" className="text-xl font-bold text-brand-primary mb-1">Professional experience</h2>
+          <p className="text-brand-textSecondary mb-5">
+            Practice the real work recorded in your resume alongside your projects.
+          </p>
+          {experiences.length === 0 ? (
+            <Card><CardContent className="p-6 text-sm text-brand-textSecondary">
+              No confirmed experience entries yet. Confirm them during onboarding to practice them here.
+            </CardContent></Card>
+          ) : (
+            <div className="grid gap-6 md:grid-cols-2">
+              {experiences.map((entry) => (
+                <Card key={entry._id} className="card-hover">
+                  <CardHeader>
+                    <CardTitle className="text-lg">{entry.company}</CardTitle>
+                    {entry.role && <p className="text-sm text-brand-textSecondary">{entry.role}{entry.currentRole ? ' · Current' : ''}</p>}
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {(entry.technologies ?? []).slice(0, 8).map((tech) => <Badge key={tech} variant="neutral">{tech}</Badge>)}
+                    </div>
+                    {(entry.responsibilities?.[0] || entry.achievements?.[0]) && (
+                      <p className="text-sm text-brand-text line-clamp-3 mb-4">{entry.responsibilities?.[0] || entry.achievements?.[0]}</p>
+                    )}
+                    <Link href={`/practice/experience/${entry._id}`}>
+                      <Button variant="secondary" className="w-full">Practice this experience</Button>
+                    </Link>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

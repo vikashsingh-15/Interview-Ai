@@ -14,7 +14,7 @@ const strings = z.array(z.string().max(2000)).max(40).default([]);
 const flexibleNumber = (min: number, max: number, fallback: number) =>
   z.preprocess((v) => {
     if (v === null || v === undefined || v === '') return undefined;
-    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.-]/g, ''));
     // Out-of-range values (e.g. a model sending confidence "85") fall back to
     // the default instead of rejecting the whole extraction.
     return Number.isFinite(n) && n >= min && n <= max ? n : undefined;
@@ -43,12 +43,12 @@ const isoDate = z.preprocess((v) => {
     const mo = monthIndex(match[1]);
     if (mo && yearOk(Number(match[2]))) return `${match[2]}-${String(mo).padStart(2, '0')}-01`;
   }
-  match = s.match(/^(\d{1,2})[\/\-.](\d{4})$/);
+  match = s.match(/^(\d{1,2})[/.-](\d{4})$/);
   if (match) {
     const mo = Number(match[1]);
     if (mo >= 1 && mo <= 12 && yearOk(Number(match[2]))) return `${match[2]}-${String(mo).padStart(2, '0')}-01`;
   }
-  match = s.match(/^(\d{4})[\/\-.](\d{1,2})$/);
+  match = s.match(/^(\d{4})[/.-](\d{1,2})$/);
   if (match) {
     const mo = Number(match[2]);
     if (mo >= 1 && mo <= 12 && yearOk(Number(match[1]))) return `${match[1]}-${String(mo).padStart(2, '0')}-01`;
@@ -59,7 +59,7 @@ const isoDate = z.preprocess((v) => {
     const day = Number(match[2]);
     if (mo && day >= 1 && day <= 31 && yearOk(Number(match[3]))) return `${match[3]}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-  match = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+  match = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
   if (match) {
     const mo = Number(match[1]);
     if (mo >= 1 && mo <= 12 && yearOk(Number(match[3]))) return `${match[3]}-${String(mo).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}`;
@@ -96,6 +96,7 @@ export const experienceEntrySchema = z.object({
   projectReferences: nullable(strings), technicalClaims: nullable(strings),
 });
 export const projectEntrySchema = z.object({
+  role: z.string().max(200).optional(),
   name: z.string().min(1).max(200), description: z.string().min(1).max(4000),
   startDate: isoDate, endDate: isoDate, technologies: nullable(strings), responsibilities: nullable(strings),
   architectureClaims: nullable(strings), features: nullable(strings), performanceClaims: nullable(strings),
@@ -128,12 +129,14 @@ export async function extractResumeText(buffer: Buffer, mimeType: string): Promi
     if (!buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new BadRequestError('Invalid PDF file');
     // Import implementation directly: pdf-parse's package entry runs a fixture when imported by Jest.
     const parse = require('pdf-parse/lib/pdf-parse.js');
-    text = (await parse(buffer, { max: 30 })).text;
+    // Legacy PDF.js uses Uint8Array.slice semantics; Buffer.slice shares memory
+    // and can corrupt cross-reference parsing on current Node versions.
+    text = (await parse(Uint8Array.from(buffer), { max: 30 })).text;
   } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) throw new BadRequestError('Invalid DOCX file');
     text = (await mammoth.extractRawText({ buffer })).value;
   } else throw new BadRequestError('Only PDF and DOCX files are supported');
-  text = text.replace(/\u0000/g, '').trim();
+  text = text.split(String.fromCharCode(0)).join('').trim();
   if (text.length < 30) throw new BadRequestError('No readable text found. Upload a text-based PDF or DOCX; scanned PDFs need OCR first.');
   if (text.length > 45000) throw new BadRequestError('Resume contains too much text. Use a shorter resume.');
   return text;

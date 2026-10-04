@@ -1,6 +1,5 @@
 import { resumeStorage } from '../../common/services/resume-storage';
 import { parseResumeBuffer } from './resume-parser';
-import { Request } from 'express';
 import mongoose from 'mongoose';
 import path from 'path';
 import crypto from 'crypto';
@@ -9,11 +8,10 @@ import config from '../../config';
 import logger from '../../config/logger';
 import Resume from './resume.model';
 import { ResumeVersion } from './resume.model';
-import ResumeProfile, { IResumeProfile, IExtractedSkill, IExperience, IProject, IEducation, ICertification } from './resume-profile.model';
+import ResumeProfile, { IResumeProfile } from './resume-profile.model';
 import InterviewProfile from '../profile/interview-profile.model';
 import { syncProjectsFromResume } from '../projects/sync-from-resume';
 import { BadRequestError, NotFoundError, InternalError } from '../../common/filters/error-filter';
-import { Question } from '../questions/question.model';
 
 // Resume service
 export const resumeService = {

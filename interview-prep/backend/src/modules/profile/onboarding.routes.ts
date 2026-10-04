@@ -9,14 +9,15 @@ import InterviewProfile from './interview-profile.model';
 import { buildDailyPlan, planTotal } from './daily-plan';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { resumeService } from '../resume/resume.service';
-import { extractedResumeSchema, skillEntrySchema, experienceEntrySchema, projectEntrySchema } from '../resume/resume-parser';
+import { skillEntrySchema, experienceEntrySchema, projectEntrySchema } from '../resume/resume-parser';
 
 const router = Router();
 router.use(authenticate);
 const confirmation = { isConfirmed: z.boolean().default(false), isRemoved: z.boolean().default(false) };
 const skill = skillEntrySchema.extend(confirmation);
-const experience = experienceEntrySchema.extend(confirmation); 
-const project = projectEntrySchema.extend(confirmation);
+const entryId = { _id: z.string().regex(/^[a-fA-F0-9]{24}$/).optional() };
+const experience = experienceEntrySchema.extend({ ...confirmation, ...entryId });
+const project = projectEntrySchema.extend({ ...confirmation, ...entryId });
 export const reviewSchema = z.object({
   fullName: z.string().max(200).optional(), currentRole: z.string().max(200).optional(),
   totalExperienceMonths: z.number().int().min(0).max(1200).optional(),
@@ -54,6 +55,15 @@ router.put('/review', asyncHandler(async (req: AuthenticatedRequest, res) => {
     throw new BadRequestError('Upload and parse a resume before reviewing it');
   const profile = await ResumeProfile.findOne({ userId: req.user!.id, resumeVersionId: resume.currentVersionId });
   if (!profile) throw new NotFoundError('Resume profile not found');
+  for (const kind of ['experience', 'projects'] as const) {
+    const allowedIds = new Set(profile[kind].map(e => String(e._id)));
+    const seenIds = new Set<string>();
+    for (const entry of data[kind]) {
+      if (entry._id && (!allowedIds.has(entry._id) || seenIds.has(entry._id)))
+        throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
+      if (entry._id) seenIds.add(entry._id);
+    }
+  }
   Object.assign(profile, data, { skills: data.skills.map(s => ({ ...s, source: 'user' })),
     userModified: true, modifiedAt: new Date() });
   await profile.save();

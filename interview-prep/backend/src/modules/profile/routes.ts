@@ -7,6 +7,7 @@ import { buildDailyPlan } from './daily-plan';
 import aiConfig from '../../config';
 import logger from '../../config/logger';
 import { DifficultyChoice } from './interview-profile.model';
+import { resolveQuestionIdsForRecords } from '../calendar/calendar.service';
 
 const router = Router();
 
@@ -218,6 +219,8 @@ router.get(
       .select('date dateKey entries totals averageScore sessionDayNumber sessionStatus')
       .lean();
 
+    const resolvedQuestionIds = await resolveQuestionIdsForRecords(req.user.id, records as any);
+
     const days = records.map((record: any) => {
       const entries = (record.entries || []).filter((e: any) => e.type !== 'search');
       const questions = entries.length || record.totals?.questions || 0;
@@ -257,6 +260,8 @@ router.get(
           knewAnswer: !!(e as any).knewAnswer,
           score: e.score,
           answer: e.answer,
+          // Lets the history page fetch or generate this question's answer.
+          questionId: e.metadata?.questionId || resolvedQuestionIds.get(`${record.dateKey}:${e.title.trim().toLowerCase()}`),
           occurredAt: e.occurredAt,
         })),
       };

@@ -1,6 +1,7 @@
 import config from './index';
 import { aiBaseURL, hasAI, hasFallbackAI, aiProviderCandidates } from '../common/services/ai-provider';
 export function validateProductionConfig() {
+  validateLocalConfig();
   if(config.ai.apiKey || config.ai.model) {
     if(!config.ai.apiKey || !config.ai.model) throw new Error('Configure both AI_API_KEY and AI_MODEL, or leave both empty');
     aiBaseURL();
@@ -10,11 +11,14 @@ export function validateProductionConfig() {
     if(!hasAI()) throw new Error('AI_FALLBACK_* requires the primary AI_API_KEY and AI_MODEL to be configured');
     aiProviderCandidates(); // validates the fallback provider/base URL
   }
-  if (!config.isProduction) { validateLocalConfig(); return; }
+  if (!config.isProduction) return;
   if(config.upload.provider !== 'gridfs') throw new Error('Production resume storage must be MongoDB GridFS; local disk is not persistent on Render/Vercel');
   if(!config.google.clientId || !config.google.clientSecret) throw new Error('Production Google sign-in requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET');
-  if(!config.urls.frontend.startsWith('https://')) throw new Error('Production FRONTEND_URL must use HTTPS');
-  if(!config.database.uri || config.database.uri.includes('localhost')) throw new Error('Production MONGODB_URI must point to your hosted database');
+  const frontend = new URL(config.urls.frontend);
+  if(frontend.protocol !== 'https:' || frontend.username || frontend.password || frontend.pathname !== '/' || frontend.search || frontend.hash)
+    throw new Error('Production FRONTEND_URL must be a plain HTTPS origin');
+  if(!process.env.MONGODB_URI || /localhost|127\.0\.0\.1|\[::1\]/i.test(config.database.uri))
+    throw new Error('Production MONGODB_URI must point to your hosted database');
 }
 
 /**
@@ -30,10 +34,6 @@ export function validateLocalConfig() {
       'random port while the frontend rewrites /api to a fixed http://localhost:3001, so every request fails even ' +
       'though the server "started". Start the backend with PORT=3001 (npm run dev does this for you).');
   }
-  if(/\.mongodb\.net/.test(config.database.uri)) {
-    throw new Error(
-      'MONGODB_URI points at an Atlas host that does not resolve from this machine, so the backend exits at ' +
-      'startup with querySrv ECONNREFUSED. For local work set ' +
-      'MONGODB_URI="mongodb://localhost:27017/interview-prep-dev" (npm run dev does this for you).');
-  }
+  if (!Number.isInteger(config.trustProxyHops) || config.trustProxyHops < 0 || config.trustProxyHops > 10)
+    throw new Error('TRUST_PROXY_HOPS must be an integer between 0 and 10');
 }

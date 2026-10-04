@@ -69,7 +69,11 @@ export interface IQuestion {
   _id: mongoose.Types.ObjectId;
 
   ownerUserId?: mongoose.Types.ObjectId;
-  // Core question
+  // Tag that identifies which resume profile generated this question (if any).
+  // The question history and shared calendar group by topic, but each row is
+  // tagged with the resumeProfileId that produced it. Null means the question
+  // came from the shared topic bank, not a specific resume.
+  resumeProfileId?: mongoose.Types.ObjectId;  // Which resume profile generated this question (if any)
   question: string;
   topic: string;
   subtopic: string;
@@ -189,6 +193,12 @@ export interface IQuestion {
   flaggedAt?: Date;
   flaggedBy?: mongoose.Types.ObjectId;
 
+  /** True when the question was served through topic-wise practice. */
+  isTopicPractice?: boolean;
+  practiceSource?: { kind: 'project' | 'experience'; id: string; label: string };
+  sourceContext?: Record<string, unknown>;
+  sourceEvidence?: string[];
+
   // Statistics
   viewCount: number;
   usageCount: number;
@@ -207,6 +217,8 @@ export interface IQuestionDocument extends IQuestion, Document {}
 const questionSchema = new Schema<IQuestion>(
   {
     ownerUserId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    // Resume profile that produced (or was active when) this question was served.
+    resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile', index: true },
     // Core question
     question: {
       type: String,
@@ -390,6 +402,12 @@ const questionSchema = new Schema<IQuestion>(
     flaggedAt: Date,
     flaggedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 
+    // Topic-wise practice marker
+    isTopicPractice: { type: Boolean, default: false },
+    practiceSource: { kind: { type: String, enum: ['project', 'experience'] }, id: String, label: String },
+    sourceContext: Schema.Types.Mixed,
+    sourceEvidence: [String],
+
     // Statistics
     viewCount: { type: Number, default: 0 },
     usageCount: { type: Number, default: 0 },
@@ -407,7 +425,6 @@ const questionSchema = new Schema<IQuestion>(
 // Compound indexes for efficient queries
 questionSchema.index({ topic: 1, subtopic: 1, difficulty: 1 });
 questionSchema.index({ topic: 1, provenance: 1 });
-questionSchema.index({ concepts: 1 });
 questionSchema.index({ interviewPriority: 1, difficulty: 1 });
 questionSchema.index({ isHidden: 1, isDeprecated: 1, qualityStatus: 1 });
 questionSchema.index({ provenance: 1, topic: 1 });

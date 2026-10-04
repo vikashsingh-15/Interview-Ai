@@ -16,17 +16,19 @@
  *   node scripts/dev.mjs --skip-db       do not start mongod (one is already up)
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BACKEND_PORT = 3001;   // frontend/next.config.js rewrites /api to this
-const FRONTEND_PORT = 3000;  // fixed: Google OAuth callback is registered here
+if (existsSync(path.join(root, '.env'))) process.loadEnvFile(path.join(root, '.env'));
+const BACKEND_PORT = Number(process.env.DEV_BACKEND_PORT || 3001);
+const FRONTEND_PORT = Number(process.env.DEV_FRONTEND_PORT || 3000);
 const MONGO_PORT = 27017;
-const MONGO_URI = `mongodb://localhost:${MONGO_PORT}/interview-prep-dev`;
+const MONGO_URI = process.env.MONGODB_URI || `mongodb://localhost:${MONGO_PORT}/interview-prep-dev`;
+const usesManagedLocalDb = /^mongodb:\/\/(localhost|127\.0\.0\.1):27017\//.test(MONGO_URI);
 
 const RESET = '\x1b[0m';
 const COLOURS = { db: '\x1b[35m', backend: '\x1b[36m', frontend: '\x1b[32m' };
@@ -132,7 +134,7 @@ function shutdown(code = 0) {
 async function main() {
   const started = [];
 
-  if (wants('db') && !skipDb) {
+  if (wants('db') && !skipDb && usesManagedLocalDb) {
     if (await listening(MONGO_PORT)) {
       log('db', `already listening on ${MONGO_PORT}, reusing it`);
     } else {
@@ -142,6 +144,7 @@ async function main() {
           + 'Run "npm install" in backend/ first, or start MongoDB yourself.');
       } else {
         const dbpath = path.join(os.tmpdir(), 'interview-prep-mongo');
+        mkdirSync(dbpath, { recursive: true });
         start('db', mongod, ['--dbpath', dbpath, '--port', String(MONGO_PORT), '--quiet'], { dir: 'backend' });
         if (!(await waitForPort('db', MONGO_PORT, 30000))) return shutdown(1);
         log('db', `ready on ${MONGO_PORT} (dbpath ${dbpath})`);
@@ -153,7 +156,8 @@ async function main() {
   if (wants('backend')) {
     start('backend', 'npm', ['run', 'start:dev'], {
       dir: 'backend',
-      env: { PORT: String(BACKEND_PORT), MONGODB_URI: MONGO_URI },
+      env: { PORT: String(BACKEND_PORT), MONGODB_URI: MONGO_URI,
+        FRONTEND_URL: process.env.FRONTEND_URL || `http://localhost:${FRONTEND_PORT}` },
     });
     // ts-node-dev compiles the whole backend on boot, so allow a generous window.
     if (!(await waitForPort('backend', BACKEND_PORT, 150000))) return shutdown(1);
@@ -164,7 +168,7 @@ async function main() {
   if (wants('frontend')) {
     start('frontend', 'npx', ['next', 'dev', '-p', String(FRONTEND_PORT)], {
       dir: 'frontend',
-      env: { PORT: String(FRONTEND_PORT) },
+      env: { PORT: String(FRONTEND_PORT), BACKEND_API_URL: process.env.BACKEND_API_URL || `http://localhost:${BACKEND_PORT}` },
     });
     if (!(await waitForPort('frontend', FRONTEND_PORT, 120000))) return shutdown(1);
     started.push('frontend');

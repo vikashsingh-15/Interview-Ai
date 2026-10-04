@@ -20,7 +20,7 @@ router.get(
     const Question = mongoose.model('Question');
     const { topic, difficulty, limit } = req.query as any;
 
-    const filter: Record<string, any> = { isHidden: false, isDeprecated: false, qualityStatus: 'approved',
+    const filter: Record<string, any> = { isHidden: false, isDeprecated: false, qualityStatus: 'approved', 'practiceSource.kind': { $exists: false },
       $or: [{ ownerUserId: { $exists: false }, provenance: 'CURATED' }, { ownerUserId: req.user.id }] };
     if (topic && typeof topic === 'string') filter.topic = topic;
     if (difficulty && typeof difficulty === 'string') filter.difficulty = difficulty;
@@ -28,7 +28,7 @@ router.get(
     const questions = await Question.find(filter)
       .sort({ interviewPriority: -1, usageCount: 1 })
       .limit(Math.max(1, Math.min(Number(limit) || 20, 100)))
-      .select('-embedding -detailedAnswer -internalWorking')
+      .select('-embedding -detailedAnswer -internalWorking -sourceContext -sourceEvidence')
       .lean();
 
     res.json({ success: true, data: questions });

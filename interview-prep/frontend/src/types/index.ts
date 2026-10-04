@@ -505,18 +505,20 @@ export interface RecentSearch {
 }
 
 // Past questions / performance history
-type PastQuestionEntry = {
+export interface PastQuestionEntry {
   id: string;
   type: string;
   title: string;
   topic?: string;
   difficulty?: string;
   status: string;
-  knewAnswer: boolean;
+  knewAnswer?: boolean;
   score?: number;
   answer?: string;
+  /** Lets the history page fetch or generate this question's answer. */
+  questionId?: string;
   occurredAt: string;
-};
+}
 
 export interface PastQuestionDay {
   date: string;
@@ -569,6 +571,8 @@ export interface DailyRecordEntry {
   answer?: string;
   sourceUrls?: string[];
   count?: number;
+  /** questionId lets the calendar fetch/generate the answer for this question. */
+  metadata?: { questionId?: string; source?: string; [key: string]: unknown };
   occurredAt: string;
 }
 

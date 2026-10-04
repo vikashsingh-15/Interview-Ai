@@ -168,7 +168,6 @@ function updateSkillState(
 
 function calculateMastery(current: number, correct: boolean, score: number): number {
   const learningRate = 0.1;
-  const decay = 0.01;
 
   if (correct) {
     return Math.min(1, current + learningRate * score);
@@ -209,16 +208,6 @@ function calculateNextReview(correct: boolean, currentNextReview?: Date): Date |
   }
 
   return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-}
-
-// Difficulty calculation for arithmetic
-function difficultyWeight(difficulty: string): number {
-  switch (difficulty) {
-    case 'easy': return 1;
-    case 'medium': return 2;
-    case 'hard': return 3;
-    default: return 1;
-  }
 }
 
 // Skill Graph Schema
@@ -295,7 +284,6 @@ const skillGraphSchema = new Schema<ISkillGraph>(
   }
 );
 
-skillGraphSchema.index({ userId: 1 }, { unique: true });
 
 // Static methods
 skillGraphSchema.statics.findByUserId = function(userId: mongoose.Types.ObjectId) {

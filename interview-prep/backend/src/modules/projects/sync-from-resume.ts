@@ -13,7 +13,6 @@ export async function syncProjectsFromResume(userId: string, resumeProfile: any)
     (p: any) => p && p.isConfirmed && !p.isRemoved &&
       typeof p.name === 'string' && p.name.trim(),
   );
-  if (!confirmed.length) return 0;
   const confirmedNames = confirmed.map((p: any) => p.name);
 
   // Hide previously synced projects the user no longer confirms.
@@ -27,11 +26,12 @@ export async function syncProjectsFromResume(userId: string, resumeProfile: any)
       name: proj.name,
       description: typeof proj.description === 'string' && proj.description.trim()
         ? proj.description : 'Imported from your resume — add details to prepare for project questions.',
-      role: String(resumeProfile.currentRole || '').trim() || 'Owner',
+      role: String(proj.role || '').trim() || 'Role not specified',
       myContribution: Array.isArray(proj.responsibilities) ? proj.responsibilities.join('; ') : '',
       technologies: Array.isArray(proj.technologies) ? proj.technologies : [],
       features: Array.isArray(proj.features) ? proj.features : [],
       keyDesignDecisions: Array.isArray(proj.technicalDecisions) ? proj.technicalDecisions : [],
+      architectureDescription: Array.isArray(proj.architectureClaims) ? proj.architectureClaims.join('; ') : '',
       performanceClaims: Array.isArray(proj.performanceClaims) ? proj.performanceClaims : [],
       securityClaims: Array.isArray(proj.securityClaims) ? proj.securityClaims : [],
       // Resume metrics are free-text strings; Project.metrics is structured.

@@ -6,7 +6,7 @@ import DailyRecord, {
   DailyRecordEntryType,
 } from './daily-record.model';
 import { DailySession } from '../sessions/daily-session.model';
-import { NotFoundError, ValidationError } from '../../common/filters/error-filter';
+import { ValidationError } from '../../common/filters/error-filter';
 
 /**
  * Calendar service
@@ -21,17 +21,6 @@ import { NotFoundError, ValidationError } from '../../common/filters/error-filte
  *  2. backfillForUser() — rebuilds day records from DailySession history,
  *     useful for existing users after adopting this feature.
  */
-
-const SESSION_TYPE_TO_ENTRY: Record<string, DailyRecordEntryType> = {
-  technical: 'technical',
-  system_design: 'system_design',
-  coding: 'coding',
-  project: 'project',
-  revision: 'revision',
-  mock_interview: 'mock_interview',
-  behavioral: 'behavioral',
-  custom: 'custom',
-};
 
 function toDailyRecordEntry(
   sq: any,
@@ -58,7 +47,10 @@ function toDailyRecordEntry(
     score: sq.finalScore,
     answer: sq.answer ? String(sq.answer).slice(0, 500) : undefined,
     count: 1,
-    metadata: sq.isRevision ? { revisionNumber: sq.revisionNumber } : undefined,
+    metadata: {
+      ...(sq.questionId ? { questionId: String(sq.questionId) } : {}),
+      ...(sq.isRevision ? { revisionNumber: sq.revisionNumber } : {}),
+    },
     occurredAt,
   };
 }
@@ -132,11 +124,12 @@ export const calendarService = {
   async markEntryAnswered(params: {
     userId: string;
     title: string;
+    questionId?: string;
     date?: Date;
     score?: number;
     answer?: string;
   }): Promise<IDailyRecordDocument | null> {
-    const { userId, title, date = new Date(), score, answer } = params;
+    const { userId, title, questionId, date = new Date(), score, answer } = params;
 
     if (!title || !title.trim()) {
       throw new ValidationError('Entry title is required');
@@ -157,6 +150,7 @@ export const calendarService = {
     }
 
     entry.status = 'answered';
+    if (questionId) entry.metadata = { ...(entry.metadata || {}), questionId };
     if (typeof score === 'number') entry.score = score;
     if (answer) entry.answer = answer.slice(0, 500);
 
@@ -178,10 +172,21 @@ export const calendarService = {
       );
       return record;
     }
-    return DailyRecord.findOne({
+    const record = await DailyRecord.findOne({
       userId: new mongoose.Types.ObjectId(userId),
       dateKey: DailyRecord.getDateKey(date),
     });
+    if (record) {
+      const ids = await resolveQuestionIdsForRecords(userId, [record]);
+      for (const entry of record.entries) {
+        const key = `${record.dateKey}:${entry.title.trim().toLowerCase()}`;
+        const questionId = ids.get(key);
+        if (questionId && !entry.metadata?.questionId) {
+          entry.metadata = { ...(entry.metadata || {}), questionId };
+        }
+      }
+    }
+    return record;
   },
 
   /** Calendar cells for a month: date, totals and status per day. */
@@ -258,7 +263,6 @@ export const calendarService = {
       );
 
       for (const section of session.sections || []) {
-        const entryType = SESSION_TYPE_TO_ENTRY[section.type] || 'custom';
         const questions = (section as any).questions || [];
 
         for (const sq of questions) {
@@ -313,6 +317,32 @@ export function recomputeTotals(record: IDailyRecordDocument): void {
 
   record.totals = totals;
   record.averageScore = scoreCount > 0 ? scoreSum / scoreCount : undefined;
+}
+
+/** Resolve IDs for legacy calendar entries from the user's own daily sessions. */
+export async function resolveQuestionIdsForRecords(userId: string, records: Array<{ dateKey: string; entries: Array<{ title: string; metadata?: Record<string, any> }> }>) {
+  if (!records.length) return new Map<string, string>();
+  const dates = records.map(record => new Date(`${record.dateKey}T00:00:00.000Z`).getTime());
+  const first = Math.min(...dates), last = Math.max(...dates);
+  const sessions = await DailySession.find({
+    userId: new mongoose.Types.ObjectId(userId),
+    sessionDate: { $gte: new Date(first), $lt: new Date(last + 24 * 60 * 60 * 1000) },
+    isDeleted: false,
+  }).populate({ path: 'sections.questions', model: 'SessionQuestion', select: 'questionId questionSnapshot' }).lean();
+  const byDateAndTitle = new Map<string, string>();
+  for (const session of sessions as any[]) {
+    const dateKey = DailyRecord.getDateKey(new Date(session.sessionDate));
+    for (const section of session.sections || []) for (const question of section.questions || []) {
+      if (question?.questionId && question?.questionSnapshot?.question) {
+        byDateAndTitle.set(`${dateKey}:${question.questionSnapshot.question.trim().toLowerCase()}`, String(question.questionId));
+      }
+    }
+  }
+  for (const record of records) for (const entry of record.entries || []) {
+    const key = `${record.dateKey}:${entry.title.trim().toLowerCase()}`;
+    if (!byDateAndTitle.has(key) && entry.metadata?.questionId) byDateAndTitle.set(key, String(entry.metadata.questionId));
+  }
+  return byDateAndTitle;
 }
 
 /**

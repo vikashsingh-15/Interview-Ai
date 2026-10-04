@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import api, { ApiResponse } from '@/lib/api';
 import { CalendarMonthOverview, DailyRecord, DailyRecordEntry } from '@/types';
 
@@ -264,6 +265,31 @@ export default function CalendarPage() {
 
 function EntryRow({ entry }: { entry: DailyRecordEntry }) {
   const meta = TYPE_META[entry.type] || TYPE_META.custom;
+  const questionId = entry.metadata?.questionId;
+  const [answer, setAnswer] = useState<CalendarAnswer | null>(null);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadAnswer = async (regenerate: boolean) => {
+    if (!questionId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = regenerate
+        ? await api.post(`/sessions/question/${questionId}/generate-answer`).catch(() =>
+            api.get(`/sessions/question/${questionId}/answer`, { params: { regenerate: 1 } })
+          )
+        : await api.get(`/sessions/question/${questionId}/answer`);
+      setAnswer(res.data.data || null);
+      setShowAnswer(true);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Could not load the answer. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex items-start gap-2 py-2 border-b border-brand-border last:border-0">
       <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${meta.color}`} />
@@ -305,7 +331,121 @@ function EntryRow({ entry }: { entry: DailyRecordEntry }) {
             </span>
           )}
         </div>
+
+        {/* Show / generate the interview answer for this question. */}
+        {entry.type !== 'search' && questionId && (
+          <div className="mt-2">
+            {!showAnswer ? (
+              <div className="flex gap-2">
+                <Button size="sm" variant="secondary" isLoading={loading} onClick={() => loadAnswer(false)}>
+                  Show answer
+                </Button>
+                <Button size="sm" variant="ghost" isLoading={loading} onClick={() => loadAnswer(true)}>
+                  Generate answer
+                </Button>
+              </div>
+            ) : (
+              <AnswerBody answer={answer} />
+            )}
+            {error && <p role="alert" className="mt-2 text-xs text-red-600">{error}</p>}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+interface CalendarAnswer {
+  sections?: {
+    direct: string;
+    questionFocus: string;
+    why: string;
+    how: string;
+    example: string;
+    tradeOff: string;
+    summary: string;
+  };
+  legacyAnswer?: string;
+  detailed?: {
+    overview: string;
+    keyPoints: string[];
+    algorithmOrApproach: string;
+    complexity: string;
+    codeSketch?: string;
+    edgeCases: string[];
+    commonMistakes: string[];
+    whyItMatters: string;
+    followUpQuestions: string[];
+    summary: string;
+  };
+  description?: string;
+  starterCode?: string;
+}
+
+function AnswerBody({ answer }: { answer: CalendarAnswer | null }) {
+  if (!answer) {
+    return <p className="mt-2 text-xs text-brand-textSecondary">No answer available yet.</p>;
+  }
+  return (
+    <div className="mt-2 rounded-lg border border-brand-border bg-brand-background p-3">
+      {answer.sections ? (
+        <div className="space-y-2">
+          <AnswerPart label="Direct answer" body={answer.sections.direct} />
+          <AnswerPart label="Why" body={answer.sections.why} />
+          <AnswerPart label="How" body={answer.sections.how} />
+          <AnswerPart label="Example" body={answer.sections.example} />
+          <AnswerPart label="Trade-off" body={answer.sections.tradeOff} />
+          <AnswerPart label="Summary" body={answer.sections.summary} />
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-brand-text whitespace-pre-wrap">{answer.legacyAnswer}</p>
+      )}
+      {answer.detailed && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs font-medium text-brand-secondary">
+            Detailed study guide
+          </summary>
+          <div className="mt-2 space-y-2">
+            <AnswerPart label="Overview" body={answer.detailed.overview} />
+            <div>
+              <h5 className="text-xs font-semibold text-brand-primary">Key points</h5>
+              <ul className="list-disc list-inside text-xs text-brand-text mt-1 space-y-1">
+                {answer.detailed.keyPoints.map((k, i) => <li key={i}>{k}</li>)}
+              </ul>
+            </div>
+            <AnswerPart label="Algorithm / approach" body={answer.detailed.algorithmOrApproach} />
+            {answer.detailed.codeSketch && (
+              <pre className="text-[11px] leading-5 font-mono bg-white rounded p-2 overflow-x-auto border border-brand-border">
+                {answer.detailed.codeSketch}
+              </pre>
+            )}
+            <AnswerPart label="Complexity / trade-offs" body={answer.detailed.complexity} />
+            <div>
+              <h5 className="text-xs font-semibold text-brand-primary">Edge cases</h5>
+              <ul className="list-disc list-inside text-xs text-brand-text mt-1 space-y-1">
+                {answer.detailed.edgeCases.map((c, i) => <li key={i}>{c}</li>)}
+              </ul>
+            </div>
+            <div>
+              <h5 className="text-xs font-semibold text-brand-primary">Common mistakes</h5>
+              <ul className="list-disc list-inside text-xs text-brand-text mt-1 space-y-1">
+                {answer.detailed.commonMistakes.map((m, i) => <li key={i}>{m}</li>)}
+              </ul>
+            </div>
+            <AnswerPart label="Why it matters" body={answer.detailed.whyItMatters} />
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function AnswerPart({ label, body }: { label: string; body: string }) {
+  if (!body) return null;
+  return (
+    <div>
+      <h5 className="text-xs font-semibold text-brand-primary">{label}</h5>
+      <p className="text-xs leading-5 text-brand-text whitespace-pre-wrap mt-0.5">{body}</p>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 ## Local development
 
-Use Node.js 22 LTS. Edit only interview-prep/.env. Both apps load that file; shell/hosting values take precedence. No .env.example, .env.development, .env.production or frontend env file is required.
+Use Node.js 22 LTS. Edit only interview-prep/.env. The backend loads that file and the frontend reads its API origin; shell/hosting values take precedence. Copy .env.example to .env for local setup. The frontend reads only BACKEND_API_URL; all credentials are backend-only. See ENVIRONMENT.md for the complete variable classification.
 
 ```env
 MONGODB_URI=mongodb://localhost:27017/interview-prep-dev
@@ -65,9 +65,9 @@ Resumes are stored in MongoDB GridFS (`resumeFiles.files` and `resumeFiles.chunk
 
 New uploads never use Render's local disk. Historical local files remain readable on the original host. Back up the database and uploads, stop uploads during migration, then run `npm run migrate:resume-storage` inside backend on that original host. The command verifies byte length/checksum before updating metadata, leaves originals intact, and can be rerun. Do not move hosts until migration succeeds. Historical cloud files require export/re-upload; the cloud adapter has been removed.
 
-## What was removed
+## Historical cleanup before this audit
 
-JWT/BCRYPT/password/email settings, Redis, vector-search switches, Swagger credentials, feature flags, logging switches and dozens of provider-specific tuning variables. Logging remains internal for diagnosis. Upload validation, rate limits, AI timeout/retry and request-budget safety defaults remain in code.
+Earlier project work removed JWT/BCRYPT/password/email settings, Redis, vector-search switches, Swagger credentials, feature flags, logging switches and dozens of provider-specific tuning variables. Logging remains internal for diagnosis. Upload validation, rate limits, AI timeout/retry and request-budget safety defaults remain in code.
 
 Google sign-in still needs a login session. One random cookie token is hashed in MongoDB; HttpOnly, Secure in production, SameSite=Lax and seven-day expiry are fixed. No JWT secret or refresh-token configuration. A temporary state cookie is used only during OAuth.
 
@@ -80,3 +80,9 @@ Back up MongoDB/files before migration. Run npm run migrate inside backend to ba
 Run builds, lint and backend tests. On actual staging, verify Google login/callback, cookie persistence/reload, logout, two-user isolation, upload/review, questions/answers/history/revisions, fresh-day repeat exclusion and private storage after restart. External providers are mocked in automated tests; live hosting/cookies/credentials still need verification.
 
 Official references: [Vercel rewrites](https://vercel.com/docs/routing/rewrites), [Render environment settings](https://render.com/docs/configure-environment-variables), [Render filesystem](https://render.com/docs/disks), [OpenRouter](https://openrouter.ai/docs/quickstart), [Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai).
+
+## Audit updates (4 October 2026)
+
+Production Next output is .next-production, separate from local development .next. vercel.json selects that output; normal npm start selects the same production directory. render.yaml provides the optional Render backend blueprint. TRUST_PROXY_HOPS defaults to 1 in production and 0 locally; validate the sanitized forwarding path before changing it. Health checks bypass the browser API rate budget. The launcher honors configured remote MongoDB; stop refuses any process whose workspace ownership cannot be verified.
+
+Use npm run lint and npm run typecheck in interview-prep; npm test runs the backend suite. Frontend browser tests: build, then npm run test:e2e in frontend (Playwright Chromium required). Tests use isolated databases or mocked browser APIs; consult CODEBASE_AUDIT.md for live verification limits.

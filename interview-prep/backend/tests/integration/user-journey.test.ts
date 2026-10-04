@@ -113,6 +113,9 @@ test('a private question bank is isolated, and daily sessions are concurrent/ide
   expect(today.body.data.sections[0].questions[0].question).toContain('Python');
   expect(await QuestionExposure.countDocuments({userId})).toBe(1);
   expect((await a.get('/api/sessions/today')).body.data.sessionId).toBe(sessionId);
+  const firstDay = await a.get('/api/sessions/day/1');
+  expect(firstDay.status).toBe(200);
+  expect(firstDay.body.data.sessionId).toBe(sessionId);
   expect((await b.get('/api/sessions/'+sessionId)).status).not.toBe(200);
   expect((await b.post('/api/sessions/'+sessionId+'/answers/'+mappingId).send({answer:'An unauthorized answer attempt'})).status).toBe(404);
 });

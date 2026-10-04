@@ -356,7 +356,6 @@ const userProgressSchema = new Schema<IUserProgress>(
 );
 
 // Indexes
-userProgressSchema.index({ userId: 1 }, { unique: true });
 userProgressSchema.index({ 'dailySummaries.date': 1 });
 userProgressSchema.index({ 'topicProgress.topic': 1 });
 
@@ -381,7 +380,6 @@ userProgressSchema.methods.incrementQuestion = function(
   timeSeconds?: number
 ) {
   this.totalQuestions += 1;
-  totalNewQuestions: this.totalQuestions += 1;
 
   switch (type) {
     case 'new':

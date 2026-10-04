@@ -1,9 +1,16 @@
-// Small syntax/safety check; avoid introducing a stylistic rewrite of legacy code.
 module.exports = {
   root: true,
-  parser: '@typescript-eslint/parser',
-  parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
   env: { node: true, es2022: true },
+  parser: '@typescript-eslint/parser',
+  parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+  plugins: ['@typescript-eslint'],
+  extends: ['eslint:recommended'],
+  rules: {
+    // TypeScript emits block-scoped declarations correctly for the Node 22 target.
+    'no-inner-declarations': 'off',
+    'no-undef': 'off',
+    'no-unused-vars': 'off',
+    '@typescript-eslint/no-unused-vars': ['warn', { args: 'none', varsIgnorePattern: '^_' }],
+  },
   ignorePatterns: ['dist/', 'node_modules/'],
-  rules: { 'no-unreachable': 'error', 'no-dupe-keys': 'error', 'no-constant-condition': 'warn' },
 };

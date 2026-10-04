@@ -54,7 +54,8 @@ export function Header() {
           </div>
 
           {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-8">
+          <div className="hidden md:flex items-center gap-4">
+            <Link href="/experience" className="text-sm font-medium text-brand-text hover:text-brand-secondary">Experience</Link>
             <Link
               href="/dashboard"
               className={cn(
@@ -292,6 +293,7 @@ export function Header() {
                   >
                     Projects
                   </Link>
+                  <Link href="/experience" className="text-brand-textSecondary py-2 hover:text-brand-text" onClick={() => setIsMenuOpen(false)}>Experience</Link>
                   <div className="pt-4 border-t border-brand-border">
                     <div className="flex items-center gap-3">
                       <span className="text-sm text-brand-textSecondary">{user?.name}</span>
