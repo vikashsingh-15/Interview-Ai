@@ -325,7 +325,7 @@ export function recomputeTotals(record: IDailyRecordDocument): void {
 }
 
 /** Resolve IDs for legacy calendar entries from the user's own daily sessions. */
-export async function resolveQuestionIdsForRecords(userId: string, records: Array<{ dateKey: string; entries: Array<{ title: string; metadata?: Record<string, any> }> }>) {
+export async function resolveQuestionIdsForRecords(userId: string, records: Array<{ dateKey: string; entries: Array<{ title: string; type?: string; metadata?: Record<string, any> }> }>) {
   if (!records.length) return new Map<string, string>();
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const dates = records.map(record => new Date(`${record.dateKey}T00:00:00.000Z`).getTime());

@@ -29,6 +29,8 @@ import marketCalibrationRoutes from './modules/market-calibration/routes';
 import analyticsRoutes from './modules/analytics/routes';
 import webSearchRoutes from './modules/web-search/routes';
 import calendarRoutes from './modules/calendar/routes';
+import trackerRoutes from './modules/tracker/routes';
+import plannerRoutes from './modules/planner/routes';
 import topicPracticeRoutes from './modules/topics/routes';
 
 
@@ -126,6 +128,8 @@ app.use('/api/market-calibration', marketCalibrationRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/search', webSearchRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/tracker', trackerRoutes);
+app.use('/api/planner', plannerRoutes);
 app.use('/api/topics', topicPracticeRoutes);
 
 // 404 handler

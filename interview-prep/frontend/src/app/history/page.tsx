@@ -9,6 +9,8 @@ import { Progress } from '@/components/ui/Progress';
 import api, { ApiResponse } from '@/lib/api';
 import { PastQuestionDay } from '@/types';
 import { AnswerView, RevealedAnswer } from '@/components/features/AnswerView';
+import { TrackerHistory } from '@/components/tracker/TrackerHistory';
+import { PlannerHistory } from '@/components/planner/PlannerHistory';
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   technical: { label: 'Technical', color: 'bg-brand-secondary' },
@@ -47,6 +49,8 @@ export default function HistoryPage() {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, RevealedAnswer>>({});
   const [answerLoading, setAnswerLoading] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'interview' | 'tracker' | 'planner'>('interview');
+  const [tabInitialized, setTabInitialized] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -64,10 +68,19 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (tabInitialized && isAuthenticated && activeTab === 'interview') {
       load();
     }
-  }, [isAuthenticated, load]);
+  }, [isAuthenticated, load, activeTab, tabInitialized]);
+
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'tracker' || tab === 'planner') {
+      setActiveTab(tab);
+      setIsLoading(false);
+    }
+    setTabInitialized(true);
+  }, []);
 
   const revealAnswer = async (questionId: string, regenerate: boolean) => {
     if (answerLoading) return;
@@ -109,11 +122,17 @@ export default function HistoryPage() {
   return (
     <div className="min-h-screen bg-brand-background">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-10">
-        <h1 className="text-3xl font-bold text-brand-primary">Past Questions</h1>
-        <p className="mt-2 text-brand-textSecondary">
-          Every question you&apos;ve been asked, grouped by day, with your
-          performance score. See a question you already knew? Mark it done.
-        </p>
+        <h1 className="text-3xl font-bold text-brand-primary">History</h1>
+        <p className="mt-2 text-brand-textSecondary">Review your interview practice, daily tracker progress, and monthly planner goals.</p>
+
+        <div role="tablist" aria-label="History type" className="mt-6 flex flex-wrap gap-2 border-b border-brand-border">
+          {(['interview', 'tracker', 'planner'] as const).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={`border-b-2 px-4 py-3 text-sm font-medium capitalize ${activeTab === tab ? 'border-brand-secondary text-brand-secondary' : 'border-transparent text-brand-textSecondary hover:text-brand-primary'}`}>{tab}</button>)}
+        </div>
+
+        {activeTab === 'tracker' && <div className="mt-6"><TrackerHistory /></div>}
+        {activeTab === 'planner' && <div className="mt-6"><PlannerHistory /></div>}
+
+        {activeTab === 'interview' && <>
 
         {error && (
           <Card className="mt-6 border-red-200 bg-red-50">
@@ -320,6 +339,7 @@ export default function HistoryPage() {
             Showing your 30 most recent active days.
           </p>
         )}
+        </>}
       </div>
     </div>
   );

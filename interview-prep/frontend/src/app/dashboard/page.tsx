@@ -11,6 +11,8 @@ import { Session, Analytics } from '@/types';
 import { formatDate, formatTime, calculateProgress, cn, truncate } from '@/lib/utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { TrackerSection } from '@/components/tracker/TrackerSection';
+import { PlannerSection } from '@/components/planner/PlannerSection';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -374,6 +376,9 @@ export default function DashboardPage() {
             </Card>
           </div>
         )}
+
+        <TrackerSection />
+        <PlannerSection />
 
         {/* Session Sections */}
         {(session?.sections?.length ?? 0) > 0 && (
