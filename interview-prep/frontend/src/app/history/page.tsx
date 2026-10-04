@@ -11,6 +11,7 @@ import { PastQuestionDay } from '@/types';
 import { AnswerView, RevealedAnswer } from '@/components/features/AnswerView';
 import { TrackerHistory } from '@/components/tracker/TrackerHistory';
 import { PlannerHistory } from '@/components/planner/PlannerHistory';
+import { InterviewCalendar } from '@/components/calendar/InterviewCalendar';
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   technical: { label: 'Technical', color: 'bg-brand-secondary' },
@@ -133,6 +134,10 @@ export default function HistoryPage() {
         {activeTab === 'planner' && <div className="mt-6"><PlannerHistory /></div>}
 
         {activeTab === 'interview' && <>
+
+        <div className="mt-6">
+          <InterviewCalendar />
+        </div>
 
         {error && (
           <Card className="mt-6 border-red-200 bg-red-50">

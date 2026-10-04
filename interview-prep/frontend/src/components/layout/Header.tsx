@@ -93,15 +93,6 @@ export function Header() {
               Search
             </Link>
             <Link
-              href="/calendar"
-              className={cn(
-                "text-sm font-medium transition-colors",
-                isAuthenticated ? "text-brand-text" : "text-brand-textSecondary hover:text-brand-text"
-              )}
-            >
-              Calendar
-            </Link>
-            <Link
               href="/settings"
               className={cn(
                 "text-sm font-medium transition-colors",
@@ -278,13 +269,6 @@ export function Header() {
                     onClick={() => setIsMenuOpen(false)}
                   >
                     Search
-                  </Link>
-                  <Link
-                    href="/calendar"
-                    className="text-brand-textSecondary py-2 hover:text-brand-text"
-                    onClick={() => setIsMenuOpen(false)}
-                  >
-                    Calendar
                   </Link>
                   <Link
                     href="/projects"
