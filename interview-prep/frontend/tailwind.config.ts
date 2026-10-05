@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: 'class',
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -10,17 +11,17 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          primary: "#0f172a",
-          secondary: "#3b82f6",
-          accent: "#10b981",
-          background: "#f8fafc",
-          surface: "#ffffff",
-          text: "#0f172a",
-          textSecondary: "#64748b",
-          border: "#e2e8f0",
-          error: "#ef4444",
-          warning: "#f59e0b",
-          success: "#22c55e",
+          primary: "rgb(var(--brand-primary) / <alpha-value>)",
+          secondary: "rgb(var(--brand-secondary) / <alpha-value>)",
+          accent: "rgb(var(--brand-accent) / <alpha-value>)",
+          background: "rgb(var(--brand-background) / <alpha-value>)",
+          surface: "rgb(var(--brand-surface) / <alpha-value>)",
+          text: "rgb(var(--brand-text) / <alpha-value>)",
+          textSecondary: "rgb(var(--brand-text-secondary) / <alpha-value>)",
+          border: "rgb(var(--brand-border) / <alpha-value>)",
+          error: "rgb(var(--brand-error) / <alpha-value>)",
+          warning: "rgb(var(--brand-warning) / <alpha-value>)",
+          success: "rgb(var(--brand-success) / <alpha-value>)",
         },
       },
       fontFamily: {

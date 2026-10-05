@@ -406,21 +406,22 @@ export default function DashboardPage() {
 
         {/* Session Sections */}
         {(session?.sections?.length ?? 0) > 0 && (
-          <div className="mb-8">
+          <div hidden={!dashboardPanels.today} className="mb-8 min-w-0">
             <h2 className="text-xl font-semibold text-brand-primary mb-4">Today&apos;s Sections</h2>
-            <div className="grid gap-6 md:grid-cols-2">
+            <div className="grid min-w-0 gap-6 md:grid-cols-2">
               {(session?.sections ?? []).map((section) => {
                 const isExpanded = !!expandedSections[section.id];
                 const visibleQuestions = isExpanded ? section.questions : section.questions.slice(0, 3);
                 return (
                 <Card key={section.id} className={cn(
                   'card-hover',
+                  'min-w-0 max-w-full overflow-hidden',
                   section.status === 'completed' && 'border-emerald-200',
                   section.status === 'in_progress' && 'border-brand-secondary'
                 )}>
                   <CardContent className="p-6">
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
+                    <div className="flex min-w-0 items-start justify-between gap-3 mb-4">
+                      <div className="min-w-0">
                         <button
                           type="button"
                           className="text-left text-lg font-semibold text-brand-primary hover:text-brand-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-secondary rounded"
@@ -442,7 +443,7 @@ export default function DashboardPage() {
                       </Badge>
                     </div>
 
-                    <div className="flex items-center gap-4 mb-4">
+                    <div className="flex min-w-0 flex-wrap items-center gap-4 mb-4">
                       <div className="flex items-center gap-1">
                         <svg className="w-4 h-4 text-brand-textSecondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -464,28 +465,28 @@ export default function DashboardPage() {
                     />
 
                     {section.questions && section.questions.length > 0 && (
-                      <div id={`section-questions-${section.id}`} className="mt-4 space-y-2">
+                      <div id={`section-questions-${section.id}`} className="mt-4 min-w-0 space-y-2">
                         {visibleQuestions.map((question) => (
                           <button
                             type="button"
                             key={question.id}
-                            className="w-full flex items-center justify-between gap-3 py-2 border-b border-brand-border last:border-0 text-left hover:bg-brand-background/70 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-secondary"
+                            className="flex w-full min-w-0 items-start justify-between gap-2 overflow-hidden border-b border-brand-border px-1 py-2 text-left hover:bg-brand-background/70 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-secondary"
                             onClick={() => router.push(`/sessions/today?questionId=${encodeURIComponent(question.id)}`)}
                             aria-label={`Open question: ${question.question}`}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex min-w-0 flex-1 items-start gap-2">
                               <span className={cn(
                                 'w-2 h-2 rounded-full',
                                 question.status === 'answered' ? 'bg-emerald-500' :
                                 question.status === 'pending' ? 'bg-brand-border' :
                                 'bg-amber-500'
                               )} />
-                              <span className="text-sm text-brand-text truncate">
+                              <span className="min-w-0 break-words text-sm text-brand-text">
                                 {truncate(question.question, 60)}
                               </span>
                             </div>
                             {question.finalScore !== undefined && (
-                              <span className="text-sm font-medium text-brand-primary">
+                              <span className="shrink-0 text-sm font-medium text-brand-primary">
                                 {Math.round(question.finalScore * 100)}%
                               </span>
                             )}
@@ -512,7 +513,7 @@ export default function DashboardPage() {
 
         {/* Topic Rationale */}
         {session?.topicSelectionRationale && (
-          <Card className="mb-8 bg-brand-secondary/5 border-brand-secondary/20">
+          <Card hidden={!dashboardPanels.today} className="mb-8 min-w-0 overflow-hidden bg-brand-secondary/5 border-brand-secondary/20">
             <CardContent className="p-6">
               <h3 className="text-lg font-semibold text-brand-primary mb-3">
                 Why this topic today?

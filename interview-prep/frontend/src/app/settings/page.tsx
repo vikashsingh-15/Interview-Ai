@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import api, { ApiResponse } from '@/lib/api';
 import { UserPreferences } from '@/types';
 import { ResumeManager } from '@/components/resume/ResumeManager';
+import { useTheme, ThemeMode } from '@/components/providers/ThemeProvider';
 
 const DIFFICULTY_OPTIONS: Array<{
   value: 'easy' | 'medium' | 'hard' | 'extra_hard' | 'mixed';
@@ -99,6 +100,7 @@ const COUNT_FIELDS: Array<{
 
 export default function SettingsPage() {
   const { isAuthenticated } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -205,6 +207,7 @@ export default function SettingsPage() {
         <p className="mt-2 text-brand-textSecondary">
           Choose how many questions you get each day and how hard they should be.
         </p>
+        <Card className="mt-6"><CardHeader><CardTitle>Appearance</CardTitle></CardHeader><CardContent><p className="mb-3 text-sm text-brand-textSecondary">Choose how Interview Prep should look on this device.</p><div className="flex flex-wrap gap-2" role="group" aria-label="Theme preference">{(['light', 'dark', 'system'] as ThemeMode[]).map(option => <button key={option} type="button" onClick={() => setTheme(option)} aria-pressed={theme === option} className={`rounded-lg border px-4 py-2 text-sm font-medium capitalize transition-colors ${theme === option ? 'border-brand-secondary bg-brand-secondary/10 text-brand-secondary' : 'border-brand-border bg-brand-surface text-brand-text hover:bg-brand-primary/10'}`}>{option}</button>)}</div></CardContent></Card>
         <div className="mt-8 border-t border-brand-border pt-8"><ResumeManager /></div>
 
         {message && (
