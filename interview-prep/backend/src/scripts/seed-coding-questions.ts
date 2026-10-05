@@ -180,36 +180,25 @@ const allPatterns = [
   questionPatterns.tree_traversal,
 ];
 
-async function seedAllCodingProblems() {
-  try {
-    console.log('Seeding coding problems...');
-
+export async function seedAllCodingProblems(): Promise<{ inserted: number; skipped: number; total: number }> {
     let inserted = 0;
     let skipped = 0;
     const duplicates = new Set<string>();
+    const existingRows = await CodingProblem.find({}).select('platform problemId').lean();
+    const existingKeys = new Set(existingRows.map(row => `${row.platform}:${row.problemId}`));
 
     for (const category of allPatterns) {
-      console.log(`\nProcessing: ${category.title}`);
-
       for (const problem of category.problems) {
         // Create unique compound key to identify duplicates
         const compositeKey = `${problem.platform}:${problem.problemId}`;
 
         // Skip if already seeded in this run
         if (duplicates.has(compositeKey)) {
-          console.log(`  ⚠ Skipping duplicate: ${problem.title}`);
           skipped++;
           continue;
         }
 
-        // Check if exists in database
-        const existing = await CodingProblem.findOne({
-          platform: problem.platform,
-          problemId: problem.problemId,
-        });
-
-        if (existing) {
-          console.log(`  ✓ Already exists: ${problem.title} (${problem.platform}/${problem.problemId})`);
+        if (existingKeys.has(compositeKey)) {
           duplicates.add(compositeKey);
           skipped++;
           continue;
@@ -235,31 +224,25 @@ async function seedAllCodingProblems() {
           updatedAt: new Date(),
         });
 
-        console.log(`  ✓ Created: ${problem.title} (${problem.difficulty})`);
         duplicates.add(compositeKey);
+        existingKeys.add(compositeKey);
         inserted++;
       }
     }
-
-    console.log(`\n✅ Seeding complete!`);
-    console.log(`   - Inserted: ${inserted}`);
-    console.log(`   - Skipped: ${skipped}`);
-    console.log(`   - Total unique: ${duplicates.size}`);
-
-    process.exit(0);
-  } catch (error) {
-    console.error('Seeding failed:', error);
-    process.exit(1);
-  }
+    return { inserted, skipped, total: duplicates.size };
 }
 
-// Connect and run
-mongoose.connect(config.database.uri, config.database.options)
-  .then(() => {
-    console.log('Connected to MongoDB');
-    return seedAllCodingProblems();
-  })
-  .catch((err) => {
-    console.error('Connection failed:', err);
-    process.exit(1);
-  });
+if (require.main === module) {
+  mongoose.connect(config.database.uri, config.database.options)
+    .then(async () => {
+      console.log('Connected to MongoDB; seeding curated coding problems...');
+      const result = await seedAllCodingProblems();
+      console.log(`Coding bank ready: ${result.inserted} inserted, ${result.skipped} already present, ${result.total} curated entries.`);
+      await mongoose.disconnect();
+    })
+    .catch(async error => {
+      console.error('Coding problem seed failed:', error);
+      await mongoose.disconnect().catch(() => undefined);
+      process.exitCode = 1;
+    });
+}

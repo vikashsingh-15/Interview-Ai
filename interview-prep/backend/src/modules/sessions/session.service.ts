@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { getOrCreateQuestionAnswer, TopicPracticeAnswer } from '../questions/answer.service';
 
 import { generatePersonalizedQuestions, generateCodingQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
+import { hasAI, hasFallbackAI } from '../../common/services/ai-provider';
 import mongoose from 'mongoose';
 import logger from '../../config/logger';
 import { DailySession, SessionQuestion } from './daily-session.model';
@@ -223,7 +224,6 @@ export const sessionService = {
   ): Promise<any[]> {
     const session = await DailySession.findById(sessionId);
     if (!session) throw new NotFoundError('Session not found');
-    const sectionFailures:{ topic?: string; title?: string; message: string }[] = [];
     const plan = interviewProfile.dailyPlan?.length ? interviewProfile.dailyPlan : [{
       title:'Professional practice', topic:interviewProfile.confirmedSkills[0] || interviewProfile.targetRole || 'Professional experience',
       type:'technical', count:interviewProfile.preferences.dailyQuestions ?? 5,
@@ -297,14 +297,15 @@ export const sessionService = {
             const generated = await generateCodingQuestions(userId, planned.topic, stillNeeded, sessionId);
             for (const question of generated) await add(question);
           } catch (error) {
-            sectionFailures.push({ topic:planned.topic, title:planned.title, message:(error as Error).message });
+            section.notes = (error as Error).message;
             logger.warn('Coding question generation failed', { userId, topic:planned.topic,
               bankSize, error:(error as Error).message });
           }
           if (section.totalQuestions === 0) {
+            const aiConfigured = hasAI() || hasFallbackAI();
             section.notes = bankSize === 0
-              ? 'The curated coding bank is empty on this install and the AI coding fallback produced nothing. Run "npm run seed:coding" in the backend folder, or set an AI provider key in Settings.'
-              : 'No unused coding problems are left in the curated bank and the AI coding fallback produced nothing. Seed more coding problems or retry later.';
+              ? `The curated coding bank is empty. The backend now seeds it automatically at startup; check backend logs for "Curated coding bank initialized". ${aiConfigured ? 'The configured AI provider also returned no usable coding questions.' : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.'}`
+              : `No unseen coding problems remain in the curated bank. ${aiConfigured ? 'The configured AI provider returned no usable new questions.' : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.'}`;
           }
         }
       } else {
@@ -314,7 +315,7 @@ export const sessionService = {
           const questions = await generatePersonalizedQuestions(userId,planned.topic,needed,planned.type,sessionId);
           for (const question of questions) await add(question);
         } catch (error) {
-          sectionFailures.push({ topic:planned.topic, title:planned.title, message:(error as Error).message });
+          section.notes = (error as Error).message;
           logger.warn('Section question generation failed', { userId, topic:planned.topic,
             error:(error as Error).message, code:(error as any)?.code });
         }
@@ -322,7 +323,7 @@ export const sessionService = {
       if (planned.type === 'project' && !interviewProfile.confirmedProjects?.length && section.totalQuestions > 0)
         section.notes = 'No confirmed resume projects yet, so these are portfolio-style prompts rather than questions about your own work. Confirm a project to make them resume-specific.';
       if (section.totalQuestions < planned.count && !section.notes) section.notes =
-        `Only ${section.totalQuestions} of ${planned.count} questions could be generated — no repeats were inserted. Widen your topics, set difficulty to Mixed, or press Regenerate later.`;
+        `Only ${section.totalQuestions} of ${planned.count} questions could be generated. No repeats were inserted. ${hasAI() || hasFallbackAI() ? 'The configured AI provider did not return enough usable new questions.' : 'No AI provider is configured and the unseen curated questions for this topic have run out.'} Configure AI_API_KEY and AI_MODEL in the backend environment, or widen the topic and try again.`;
       await session.save();
 
       async function add(question:any) {
@@ -340,10 +341,8 @@ export const sessionService = {
         await session!.save();
       }
     }
-    if (sectionFailures.length) {
-      const last = session.sections[session.sections.length-1];
-      if (last && !last.notes) last.notes = sectionFailures[0].message;
-    }
+    // Failures are attached to their own section above; never place the first
+    // failed section's reason on the last section in the plan.
     return session.sections as any[];
   },
 

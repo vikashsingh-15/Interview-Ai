@@ -17,6 +17,7 @@ import { notFoundHandler } from './common/filters/not-found-filter';
 import authRoutes from './modules/auth/routes';
 import resumeRoutes from './modules/resume/routes';
 import { ensureMultiResumeIndexes } from './modules/resume/resume-indexes';
+import { seedAllCodingProblems } from './scripts/seed-coding-questions';
 import profileRoutes from './modules/profile/routes';
 import skillGraphRoutes from './modules/skill-graph/routes';
 import questionRoutes from './modules/questions/routes';
@@ -146,6 +147,14 @@ export async function startServer() {
     // Connect to MongoDB
     await mongoose.connect(config.database.uri, config.database.options);
     await ensureMultiResumeIndexes();
+    try {
+      const seeded = await seedAllCodingProblems();
+      logger.info('Curated coding bank initialized', seeded);
+    } catch (error) {
+      // The app can still serve other practice modes; keep startup resilient,
+      // while making the failed repair visible to operators.
+      logger.warn('Could not initialize curated coding bank', { error });
+    }
 
     logger.info('Connected to MongoDB');
 
