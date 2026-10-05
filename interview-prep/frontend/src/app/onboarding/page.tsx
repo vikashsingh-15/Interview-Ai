@@ -29,7 +29,7 @@ export default function OnboardingPage() {
     const { data } = await api.get('/profile/onboarding');
     const resume = data.data.resume?.profile;
     const profile = data.data.profile;
-    if (resume) { setFacts(resume); setReviewed(Boolean(resume.userModified)); setMonths(resume.totalExperienceMonths || 0); }
+    if (resume) { setFacts(resume); setReviewed(false); setMonths(resume.totalExperienceMonths || 0); }
     if (profile) {
       setRole(profile.targetRole || ''); setLevel(profile.targetLevel || '');
       setMonths(profile.actualExperienceMonths || 0); setCompanies((profile.targetCompanies || []).join(', '));
@@ -86,7 +86,7 @@ export default function OnboardingPage() {
       <button className="underline text-blue-700" onClick={()=>{setReviewed(false);setFacts({...facts,skills:[...facts.skills,{name:'',category:'other',confidence:1,isConfirmed:false,isRemoved:false}]});}}>Add skill</button>
       {['experience','projects'].map(kind=><div key={kind} className="space-y-3">
         <h3 className="font-semibold">{kind === 'experience'?'Work experience':'Projects'}</h3>
-        {facts[kind].map((item:any,i:number)=><div key={i} className="border rounded p-3 space-y-2">
+        {facts[kind].map((item:any,i:number)=><div key={item._id || `${kind}-${i}`} className="border rounded p-3 space-y-2">
           {kind === 'experience'?<><label className="block">Company<input className={inputStyle} value={item.company} onChange={e=>updateEntry(kind,i,{company:e.target.value})} /></label>
             <label className="block">Role<input className={inputStyle} value={item.role} onChange={e=>updateEntry(kind,i,{role:e.target.value})} /></label></>
             :<><label className="block">Project name<input className={inputStyle} value={item.name} onChange={e=>updateEntry(kind,i,{name:e.target.value})} /></label>
@@ -115,11 +115,11 @@ export default function OnboardingPage() {
           :{company:'',role:'',technologies:[],responsibilities:[],isConfirmed:false,isRemoved:false}]});}}>Add {kind==='projects'?'project':'experience'}</button>
       </div>)}
       <button className={buttonStyle} disabled={busy} onClick={()=>act(async()=>{
-        const saved = await api.put('/profile/review',{fullName:facts.fullName,currentRole:facts.currentRole,totalExperienceMonths:months,
+        const response = await api.put('/profile/review',{fullName:facts.fullName,currentRole:facts.currentRole,totalExperienceMonths:months,
           skills:facts.skills,experience:facts.experience,projects:facts.projects});
-        setFacts(saved.data.data);
+        setFacts(response.data.data);
         setReviewed(true);setMessage('Review saved. Only confirmed entries will personalize questions.');
-        if (!plan.length) setPlan([{title:'Professional practice',topic:facts.skills.find((s:any)=>s.isConfirmed&&!s.isRemoved)?.name || facts.currentRole || 'Professional experience',type:'technical',count:5}]);
+        if (!plan.length) setPlan([{title:'Professional practice',topic:response.data.data.skills.find((s:any)=>s.isConfirmed&&!s.isRemoved)?.name || response.data.data.currentRole || 'Professional experience',type:'technical',count:5}]);
       })}>Save reviewed facts</button>
     </section>}
     {facts && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">3. Goals and daily plan</h2>

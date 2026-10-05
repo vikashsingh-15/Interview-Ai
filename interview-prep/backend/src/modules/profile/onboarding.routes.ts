@@ -50,21 +50,28 @@ router.get('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) =>
 }));
 router.put('/review', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const data = reviewSchema.parse(req.body);
-  const resume = await Resume.findOne({ userId: req.user!.id, isDeleted: false });
+  const resume = await Resume.findOne({ userId: req.user!.id, isDeleted: false, isActive: true });
   if (!resume || !(await ResumeVersion.exists({ _id: resume.currentVersionId, parsed: true })))
     throw new BadRequestError('Upload and parse a resume before reviewing it');
   const profile = await ResumeProfile.findOne({ userId: req.user!.id, resumeVersionId: resume.currentVersionId });
   if (!profile) throw new NotFoundError('Resume profile not found');
+  const normalized: { experience: any[]; projects: any[] } = {
+    experience: [],
+    projects: [],
+  };
   for (const kind of ['experience', 'projects'] as const) {
     const allowedIds = new Set(profile[kind].map(e => String(e._id)));
     const seenIds = new Set<string>();
     for (const entry of data[kind]) {
       if (entry._id && (!allowedIds.has(entry._id) || seenIds.has(entry._id)))
         throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
-      if (entry._id) seenIds.add(entry._id);
+      const id = entry._id || new mongoose.Types.ObjectId().toString();
+      if (seenIds.has(id)) throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
+      seenIds.add(id);
+      normalized[kind].push({ ...entry, _id: id });
     }
   }
-  Object.assign(profile, data, { skills: data.skills.map(s => ({ ...s, source: 'user' })),
+  Object.assign(profile, data, normalized, { skills: data.skills.map(s => ({ ...s, source: 'user' })),
     userModified: true, modifiedAt: new Date() });
   await profile.save();
   // Reviewed facts invalidate stale personalization until the user confirms settings again.

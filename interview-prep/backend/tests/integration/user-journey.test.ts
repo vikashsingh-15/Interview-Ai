@@ -12,6 +12,7 @@ import { createSession, hashToken } from '../../src/common/middleware/auth';
 import User from '../../src/modules/auth/user.model';
 import { ResumeVersion } from '../../src/modules/resume/resume.model';
 import Resume from '../../src/modules/resume/resume.model';
+import ResumeProfile from '../../src/modules/resume/resume-profile.model';
 import { resumeStorage } from '../../src/common/services/resume-storage';
 import { deleteUserData } from '../../src/modules/auth/user-data.service';
 import DailyRecord from '../../src/modules/calendar/daily-record.model';
@@ -91,6 +92,38 @@ test('Google-session user, genuine upload, review and generic-role onboarding',a
   const planB=await buildQuestionPlan(pb,'React',1);
   expect(JSON.stringify(pa.confirmedFacts)).toContain('Python');
   expect(JSON.stringify(planB.confirmedFacts)).not.toContain('Python');
+});
+test('review uses active resume and assigns unique IDs to newly added projects and experience', async()=>{
+  const email='resume-review-active@example.test';
+  const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
+  const agent=request.agent(app);
+  agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
+  const first=await agent.post('/api/resume/upload').field('name','First').field('createNew','true')
+    .attach('file',await docxResume('First resume contains Python and engineering background.'),{filename:'first.docx',contentType:mime});
+  const firstVersion=first.body.data.resumeVersion.id;
+  expect((await agent.post('/api/resume/parse/'+firstVersion)).status).toBe(200);
+  const second=await agent.post('/api/resume/upload').field('name','Second').field('createNew','true')
+    .attach('file',await docxResume('Second resume contains React and engineering background.'),{filename:'second.docx',contentType:mime});
+  const secondVersion=second.body.data.resumeVersion.id;
+  expect((await agent.post('/api/resume/parse/'+secondVersion)).status).toBe(200);
+  expect((await agent.post('/api/resume/'+second.body.data.resume.id+'/activate')).status).toBe(200);
+
+  const submitted={currentRole:'Engineer',skills:[],
+    experience:[{company:'New Co',role:'Engineer',responsibilities:[],technologies:[],achievements:[],projectReferences:[],technicalClaims:[]}],
+    projects:[{name:'New Project',description:'A project I actually built.',technologies:[],responsibilities:[],architectureClaims:[],features:[],performanceClaims:[],metrics:[],securityClaims:[],technicalDecisions:[]}]};
+  const reviewed=await agent.put('/api/profile/review').send(submitted);
+  expect(reviewed.status).toBe(200);
+  expect(reviewed.body.data.resumeVersionId).toBe(secondVersion);
+  expect(reviewed.body.data.experience[0]._id).toMatch(/^[a-f\d]{24}$/i);
+  expect(reviewed.body.data.projects[0]._id).toMatch(/^[a-f\d]{24}$/i);
+  expect(String((await ResumeProfile.findOne({userId:user._id,resumeVersionId:firstVersion}))?.projects.length)).toBe('0');
+  const id=reviewed.body.data.projects[0]._id;
+  const duplicate=await agent.put('/api/profile/review').send({...submitted,projects:[{...submitted.projects[0],_id:id},{...submitted.projects[0],_id:id}]});
+  expect(duplicate.status).toBe(400);
+  expect(duplicate.body.error.message).toBe('Resume entry IDs must be unique and belong to this resume');
+  const foreign=await agent.put('/api/profile/review').send({...submitted,projects:[{...submitted.projects[0],_id:'000000000000000000000001'}]});
+  expect(foreign.status).toBe(400);
+  expect(foreign.body.error.message).toBe('Resume entry IDs must be unique and belong to this resume');
 });
 test('cross-user resume parsing, settings, admin and CSRF are denied',async()=>{
   expect((await b.post('/api/resume/parse/'+versionId)).status).toBe(404);
