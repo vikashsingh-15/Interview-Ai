@@ -11,6 +11,7 @@ import { ResumeVersion } from './resume.model';
 import ResumeProfile, { IResumeProfile } from './resume-profile.model';
 import InterviewProfile from '../profile/interview-profile.model';
 import { syncProjectsFromResume } from '../projects/sync-from-resume';
+import Project from '../projects/project.model';
 import { BadRequestError, NotFoundError, InternalError } from '../../common/filters/error-filter';
 
 // Resume service
@@ -165,7 +166,6 @@ export const resumeService = {
       if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
       throw error;
     }
-    await InterviewProfile.updateOne({userId},{$set:{onboardingCompleted:false}});
 
     logger.info('Resume uploaded', {
       userId,
@@ -175,7 +175,7 @@ export const resumeService = {
     });
 
     // Create initial resume profile (will be parsed asynchronously)
-    await ResumeProfile.create({
+    const resumeProfile = await ResumeProfile.create({
       userId: new mongoose.Types.ObjectId(userId),
       resumeVersionId: resumeVersion._id,
       versionNumber,
@@ -189,6 +189,10 @@ export const resumeService = {
       extractedAt: new Date(),
       userModified: false,
     });
+
+    // Keep confirmation and interview preferences attached to this exact
+    // resume version. Uploading an inactive resume cannot reset the active one.
+    if (resume.isActive) await this.getOrCreateInterviewProfile(userId, resumeProfile._id);
 
     return {
       resumeVersion,
@@ -286,7 +290,10 @@ export const resumeService = {
 
       resumeProfile.userModified = false;
       await resumeProfile.save();
-      await InterviewProfile.updateOne({userId:resumeProfile.userId},{$set:{onboardingCompleted:false}});
+      const activeResume = await Resume.findOne({ userId: resumeProfile.userId, isActive: true, isDeleted: false }).select('currentVersionId').lean();
+      if (String(activeResume?.currentVersionId || '') === String(resumeVersion._id)) {
+        await InterviewProfile.updateOne({ userId: resumeProfile.userId, resumeProfileId: resumeProfile._id }, { $set: { onboardingCompleted: false } });
+      }
 
       // Mark as parsed
       resumeVersion.parsed = true;
@@ -393,8 +400,12 @@ export const resumeService = {
     await Resume.updateMany({ userId, isDeleted: false, _id: { $ne: resume._id } }, { $set: { isActive: false } });
     resume.isActive = true;
     await resume.save();
-    if (changedActiveResume) {
-      await InterviewProfile.updateOne({ userId }, { $set: { onboardingCompleted: false } });
+    if (changedActiveResume && resume.currentVersionId) {
+      const facts = await ResumeProfile.findOne({ userId, resumeVersionId: resume.currentVersionId }).select('_id userModified').lean();
+      if (facts) {
+        await this.getOrCreateInterviewProfile(userId, facts._id);
+        await this.regenerateInterviewProfile(userId);
+      }
     }
     return resume.toObject();
   },
@@ -437,6 +448,15 @@ export const resumeService = {
       if (replacement) {
         replacement.isActive = true;
         await replacement.save();
+        if (replacement.currentVersionId) {
+          const facts = await ResumeProfile.findOne({ userId, resumeVersionId: replacement.currentVersionId }).select('_id').lean();
+          if (facts) {
+            await this.getOrCreateInterviewProfile(userId, facts._id);
+            await this.regenerateInterviewProfile(userId);
+          }
+        }
+      } else {
+        await Project.updateMany({ userId: new mongoose.Types.ObjectId(userId), isVerifiedFromResume: true }, { $set: { isHidden: true } });
       }
     }
 
@@ -466,44 +486,61 @@ export const resumeService = {
     }
 
     // Update skills
-    if (updates.skills) {
-      for (const skillUpdate of updates.skills) {
-        const skill = resumeProfile.skills.find(
-          s => s.name === skillUpdate.name
-        );
+    const normalize = (kind: 'skills' | 'experience' | 'projects', values: any[]) => {
+      const owned = new Set((resumeProfile as any)[kind].map((entry: any) => String(entry._id)));
+      const seen = new Set<string>();
+      return values.map(entry => {
+        if (entry._id && !mongoose.Types.ObjectId.isValid(String(entry._id)))
+          throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
+        if (entry._id && (!owned.has(String(entry._id)) || seen.has(String(entry._id))))
+          throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
+        const id = String(entry._id || new mongoose.Types.ObjectId());
+        if (seen.has(id)) throw new BadRequestError('Resume entry IDs must be unique and belong to this resume');
+        seen.add(id);
+        return { ...entry, _id: new mongoose.Types.ObjectId(id) };
+      });
+    };
+    if (updates.skills) resumeProfile.skills = normalize('skills', updates.skills).map((s: any) => ({
+      ...s, source: 'user', isConfirmed: Boolean(s.isConfirmed), isRemoved: Boolean(s.isRemoved),
+    })) as any;
+    if (updates.experience) resumeProfile.experience = normalize('experience', updates.experience) as any;
+    if (updates.projects) resumeProfile.projects = normalize('projects', updates.projects) as any;
 
-        if (skill) {
-          skill.isConfirmed = skillUpdate.isConfirmed;
-          skill.isRemoved = skillUpdate.isRemoved;
-          if (skill.isConfirmed) {
-            skill.source = 'user';
-          }
+    if (updates.education) resumeProfile.education = updates.education as any;
+    if (updates.certifications) resumeProfile.certifications = updates.certifications as any;
+
+    resumeProfile.userModified = resumeProfile.userModified ||
+      resumeProfile.skills.some(skill => skill.isConfirmed && !skill.isRemoved) ||
+      resumeProfile.experience.some(entry => entry.isConfirmed && !entry.isRemoved) ||
+      resumeProfile.projects.some(entry => entry.isConfirmed && !entry.isRemoved);
+    resumeProfile.modifiedAt = new Date();
+    await resumeProfile.save();
+    await syncProjectsFromResume(userId, resumeProfile).catch(error => logger.warn('Project sync failed after profile edit', { userId, error: String(error) }));
+
+    return resumeProfile;
+  },
+
+  async getOrCreateInterviewProfile(userId: string, resumeProfileId: mongoose.Types.ObjectId) {
+    const ownerId = new mongoose.Types.ObjectId(userId);
+    let profile = await InterviewProfile.findOne({ userId: ownerId, resumeProfileId });
+    if (!profile) {
+      // Preferences may have been saved before the first resume existed. Reuse
+      // that legacy unbound profile once, while never stealing another resume's.
+      const candidates = await InterviewProfile.find({ userId: ownerId }).sort({ updatedAt: -1 });
+      for (const candidate of candidates) {
+        if (!(await ResumeProfile.exists({ _id: candidate.resumeProfileId, userId: ownerId }))) {
+          profile = candidate;
+          profile.resumeProfileId = resumeProfileId;
+          await profile.save();
+          break;
         }
       }
     }
-
-    // Update other fields as needed
-    if (updates.experience) {
-      resumeProfile.experience = updates.experience;
-    }
-
-    if (updates.projects) {
-      resumeProfile.projects = updates.projects;
-    }
-
-    if (updates.education) {
-      resumeProfile.education = updates.education;
-    }
-
-    if (updates.certifications) {
-      resumeProfile.certifications = updates.certifications;
-    }
-
-    resumeProfile.userModified = true;
-    resumeProfile.modifiedAt = new Date();
-    await resumeProfile.save();
-
-    return resumeProfile;
+    if (!profile) profile = await InterviewProfile.create({
+      userId: ownerId, resumeProfileId, experienceLevel: 'other', targetRole: '', targetCompanies: [],
+      onboardingCompleted: false,
+    });
+    return profile;
   },
 
   // Regenerate interview profile from resume
@@ -525,37 +562,7 @@ export const resumeService = {
     }
 
     // Create or update interview profile
-    let interviewProfile = await InterviewProfile.findOne({ userId });
-
-    if (!interviewProfile) {
-      interviewProfile = await InterviewProfile.create({
-        userId: new mongoose.Types.ObjectId(userId),
-        resumeProfileId: resumeProfile._id,
-        experienceLevel: 'other',
-        targetRole: '',
-        targetCompanies: [],
-        onboardingCompleted: false,
-        preferences: {
-          dailyQuestions: 5,
-          codingCount: 0,
-          systemDesignCount: 0,
-          projectQuestions: 0,
-          studyDays: 90,
-          focusTopics: [],
-          excludedTopics: [],
-          revisionFrequency: 'daily',
-          mockInterviewDuration: 45,
-          systemDesignFocus: [],
-          codingFocus: [],
-          codingLanguages: [],
-          startTimeOfDay: 'morning',
-          notificationEnabled: true,
-        },
-      });
-    } else {
-      interviewProfile.resumeProfileId = resumeProfile._id;
-      await interviewProfile.save();
-    }
+    const interviewProfile = await this.getOrCreateInterviewProfile(userId, resumeProfile._id);
 
     // Extract skills from confirmed resume profile
     const confirmedSkills = resumeProfile.skills

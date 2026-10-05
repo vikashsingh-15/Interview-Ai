@@ -148,6 +148,7 @@ export interface IProject {
   // Resume reference
   resumeProfileId?: mongoose.Types.ObjectId;
   resumeVersionId?: mongoose.Types.ObjectId;
+  resumeEntryId?: mongoose.Types.ObjectId;
   isVerifiedFromResume: boolean;
   verifiedAt?: Date;
 
@@ -335,6 +336,7 @@ const projectSchema = new Schema<IProject>(
     // Resume reference
     resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile' },
     resumeVersionId: { type: Schema.Types.ObjectId, ref: 'ResumeVersion' },
+    resumeEntryId: { type: Schema.Types.ObjectId },
     isVerifiedFromResume: { type: Boolean, default: false },
     verifiedAt: Date,
 

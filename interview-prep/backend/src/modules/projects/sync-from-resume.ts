@@ -13,11 +13,15 @@ export async function syncProjectsFromResume(userId: string, resumeProfile: any)
     (p: any) => p && p.isConfirmed && !p.isRemoved &&
       typeof p.name === 'string' && p.name.trim(),
   );
-  const confirmedNames = confirmed.map((p: any) => p.name);
-
+  const activeResume: any = await mongoose.model('Resume').findOne({ userId: new mongoose.Types.ObjectId(userId), isActive: true, isDeleted: false }).select('currentVersionId').lean();
+  const shouldBeVisible = String(activeResume?.currentVersionId || '') === String(resumeProfile?.resumeVersionId || '');
+  await Project.updateMany(
+    { userId: new mongoose.Types.ObjectId(userId), isVerifiedFromResume: true, resumeProfileId: { $ne: resumeProfile._id } },
+    { $set: { isHidden: true } },
+  );
   // Hide previously synced projects the user no longer confirms.
   await Project.updateMany(
-    { userId: new mongoose.Types.ObjectId(userId), isVerifiedFromResume: true, name: { $nin: confirmedNames } },
+    { userId: new mongoose.Types.ObjectId(userId), resumeProfileId: resumeProfile._id, isVerifiedFromResume: true, resumeEntryId: { $nin: confirmed.map((p: any) => p._id) } },
     { $set: { isHidden: true } },
   );
 
@@ -41,12 +45,14 @@ export async function syncProjectsFromResume(userId: string, resumeProfile: any)
       isCurrent: !proj.endDate,
       resumeProfileId: resumeProfile._id,
       resumeVersionId: resumeProfile.resumeVersionId,
+      resumeEntryId: proj._id,
       isVerifiedFromResume: true,
       verifiedAt: new Date(),
+      isHidden: !shouldBeVisible,
     };
-    const existing = await Project.findOne({ userId: new mongoose.Types.ObjectId(userId), name: proj.name });
+    const existing = await Project.findOne({ userId: new mongoose.Types.ObjectId(userId), resumeProfileId: resumeProfile._id, resumeEntryId: proj._id, isVerifiedFromResume: true });
     if (existing) {
-      Object.assign(existing, payload, { isHidden: false });
+      Object.assign(existing, payload);
       await existing.save();
     } else {
       const doc = new Project({ userId: new mongoose.Types.ObjectId(userId), ...payload });

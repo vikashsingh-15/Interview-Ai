@@ -2,12 +2,19 @@ import mongoose from 'mongoose';
 import Resume from './resume.model';
 import ResumeProfile from './resume-profile.model';
 import { NotFoundError } from '../../common/filters/error-filter';
+import InterviewProfile from '../profile/interview-profile.model';
 
 export async function resolveActiveResumeContext(userId: string) {
   const resume: any = await Resume.findOne({ userId, isActive: true, isDeleted: false }).lean();
   if (!resume?.currentVersionId) return null;
   const profile: any = await ResumeProfile.findOne({ userId, resumeVersionId: resume.currentVersionId }).lean();
   return profile ? { resumeId: resume._id, resumeVersionId: resume.currentVersionId, resumeName: resume.name, profile } : null;
+}
+
+export async function resolveActiveInterviewProfile(userId: string) {
+  const context = await resolveActiveResumeContext(userId);
+  if (!context) return null;
+  return InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(userId), resumeProfileId: context.profile._id });
 }
 
 export async function resolveStoredResumeContext(userId: string, question: any) {

@@ -112,14 +112,18 @@ test('review uses active resume and assigns unique IDs to newly added projects a
   const secondFacts=await ResumeProfile.findOne({userId:user._id,resumeVersionId:secondVersion});
   secondFacts!.skills[0].isConfirmed=true;
   await secondFacts!.save();
-  const interviewProfile=await InterviewProfile.create({userId:user._id,resumeProfileId:firstFacts!._id,
-    onboardingCompleted:true,confirmedSkills:['Python']});
+  const interviewProfile=await InterviewProfile.findOneAndUpdate({userId:user._id,resumeProfileId:firstFacts!._id},
+    {$set:{onboardingCompleted:true,confirmedSkills:['Python']}},{new:true});
   expect((await agent.post('/api/resume/'+second.body.data.resume.id+'/activate')).status).toBe(200);
-  expect((await InterviewProfile.findById(interviewProfile._id))?.onboardingCompleted).toBe(false);
+  expect((await InterviewProfile.findById(interviewProfile!._id))?.onboardingCompleted).toBe(true);
   const regenerated=await resumeService.regenerateInterviewProfile(String(user._id));
   expect(String(regenerated.resumeProfile._id)).toBe(String(secondFacts!._id));
   expect(String(regenerated.interviewProfile.resumeProfileId)).toBe(String(secondFacts!._id));
   expect(regenerated.interviewProfile.confirmedSkills).toEqual(['React']);
+  expect((await agent.post('/api/resume/'+first.body.data.resume.id+'/activate')).status).toBe(200);
+  expect((await agent.get('/api/profile/onboarding')).body.data.profile.onboardingCompleted).toBe(true);
+  expect((await agent.post('/api/resume/'+second.body.data.resume.id+'/activate')).status).toBe(200);
+  expect((await agent.get('/api/profile/onboarding')).body.data.profile.onboardingCompleted).toBe(false);
 
   const submitted={currentRole:'Engineer',skills:[],
     experience:[{company:'New Co',role:'Engineer',responsibilities:[],technologies:[],achievements:[],projectReferences:[],technicalClaims:[]}],
@@ -137,6 +141,37 @@ test('review uses active resume and assigns unique IDs to newly added projects a
   const foreign=await agent.put('/api/profile/review').send({...submitted,projects:[{...submitted.projects[0],_id:'000000000000000000000001'}]});
   expect(foreign.status).toBe(400);
   expect(foreign.body.error.message).toBe('Resume entry IDs must be unique and belong to this resume');
+});
+test('per-resume profile editor archives facts without touching original uploads', async()=>{
+  const email='resume-profile-edit@example.test';
+  const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
+  const agent=request.agent(app);
+  agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
+  const upload=await agent.post('/api/resume/upload').field('name','Editable').field('createNew','true')
+    .attach('file',await docxResume('Editable resume with Python and genuine engineering experience.'),{filename:'editable.docx',contentType:mime});
+  const version=upload.body.data.resumeVersion.id, resumeId=upload.body.data.resume.id;
+  await agent.post('/api/resume/parse/'+version);
+  const facts=(await agent.get('/api/resume/'+resumeId+'/profile')).body.data;
+  facts.skills[0].isConfirmed=true;
+  facts.projects=[{name:'Editor project',description:'An authored project.',technologies:['Node.js'],responsibilities:['Built API'],architectureClaims:[],features:[],performanceClaims:[],metrics:[],securityClaims:[],technicalDecisions:[],isConfirmed:true,isRemoved:false}];
+  facts.experience=[{company:'Example Co',role:'Engineer',responsibilities:['Built services'],technologies:['Node.js'],achievements:[],projectReferences:[],technicalClaims:[],currentRole:false,isConfirmed:true,isRemoved:false}];
+  const saved=await agent.put('/api/resume/'+resumeId+'/profile').send(facts);
+  expect(saved.status).toBe(200);
+  const after=(await agent.get('/api/resume/'+resumeId+'/profile')).body.data;
+  expect(after.projects[0]._id).toMatch(/^[a-f\d]{24}$/i);
+  const original=await agent.get('/api/resume/files/'+version);
+  expect(original.status).toBe(200);
+  const profile=await ResumeProfile.findOne({userId:user._id,resumeVersionId:version});
+  const archivedProjectId=profile!.projects[0]._id;
+  profile!.projects[0].isRemoved=true; profile!.projects[0].isConfirmed=false; await profile!.save();
+  await resumeService.regenerateInterviewProfile(String(user._id));
+  expect((await agent.get('/api/projects')).body.data).toHaveLength(0);
+  expect((await agent.get('/api/topics/source/project/'+archivedProjectId)).status).toBe(404);
+  expect((await agent.get('/api/topics/experience')).body.data).toHaveLength(1);
+  profile!.experience[0].isRemoved=true; profile!.experience[0].isConfirmed=false; await profile!.save();
+  await resumeService.regenerateInterviewProfile(String(user._id));
+  expect((await agent.get('/api/topics/experience')).body.data).toHaveLength(0);
+  expect((await agent.get('/api/topics/source/experience/'+profile!.experience[0]._id)).status).toBe(404);
 });
 test('cross-user resume parsing, settings, admin and CSRF are denied',async()=>{
   expect((await b.post('/api/resume/parse/'+versionId)).status).toBe(404);

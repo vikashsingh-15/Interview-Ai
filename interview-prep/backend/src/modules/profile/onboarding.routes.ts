@@ -44,8 +44,8 @@ const onboardingSchema = z.object({
 });
 
 router.get('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const [resume, profile] = await Promise.all([resumeService.getResume(req.user!.id),
-    InterviewProfile.findOne({ userId: req.user!.id }).lean()]);
+  const resume = await resumeService.getResume(req.user!.id);
+  const profile = resume?.profile ? await InterviewProfile.findOne({ userId: req.user!.id, resumeProfileId: resume.profile._id }).lean() : null;
   res.json({ success: true, data: { resume, profile } });
 }));
 router.put('/review', asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -75,7 +75,7 @@ router.put('/review', asyncHandler(async (req: AuthenticatedRequest, res) => {
     userModified: true, modifiedAt: new Date() });
   await profile.save();
   // Reviewed facts invalidate stale personalization until the user confirms settings again.
-  await InterviewProfile.updateOne({ userId: req.user!.id }, { onboardingCompleted: false });
+  await InterviewProfile.updateOne({ userId: req.user!.id, resumeProfileId: profile._id }, { onboardingCompleted: false });
   res.json({ success: true, data: profile });
 }));
 router.post('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) => {

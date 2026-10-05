@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/providers/AuthProvider';
 import api from '@/lib/api';
@@ -25,6 +25,8 @@ export default function OnboardingPage() {
   const [difficulty,setDifficulty] = useState('mixed');
   const [date,setDate] = useState('');
   const [plan,setPlan] = useState<any[]>([]);
+  const [skillDraft,setSkillDraft] = useState('');
+  const skillInput = useRef<HTMLInputElement>(null);
   async function load() {
     const { data } = await api.get('/profile/onboarding');
     const resume = data.data.resume?.profile;
@@ -83,7 +85,10 @@ export default function OnboardingPage() {
         <label><input type="checkbox" checked={skill.isConfirmed && !skill.isRemoved} onChange={e=>updateEntry('skills',i,{isConfirmed:e.target.checked,isRemoved:false})} /> Confirm</label>
         <label><input type="checkbox" checked={skill.isRemoved} onChange={e=>updateEntry('skills',i,{isRemoved:e.target.checked,isConfirmed:false})} /> Reject</label>
       </div>)}
-      <button className="underline text-blue-700" onClick={()=>{setReviewed(false);setFacts({...facts,skills:[...facts.skills,{name:'',category:'other',confidence:1,isConfirmed:false,isRemoved:false}]});}}>Add skill</button>
+      <form className="flex flex-wrap gap-2" onSubmit={e=>{e.preventDefault();const name=skillDraft.trim();if(!name)return;if(facts.skills.some((item:any)=>item.name.trim().toLowerCase()===name.toLowerCase())){setSkillDraft('');skillInput.current?.focus();return;}setReviewed(false);setFacts({...facts,skills:[...facts.skills,{name,category:'other',confidence:1,source:'user',isConfirmed:true,isRemoved:false}]});setSkillDraft('');skillInput.current?.focus();}}>
+        <input ref={skillInput} aria-label="Add a technical skill" className={inputStyle+' max-w-sm'} placeholder="Type a skill and press Enter" value={skillDraft} onChange={e=>setSkillDraft(e.target.value)} />
+        <button type="submit" className="rounded border px-3 py-2">Add skill</button>
+      </form>
       {['experience','projects'].map(kind=><div key={kind} className="space-y-3">
         <h3 className="font-semibold">{kind === 'experience'?'Work experience':'Projects'}</h3>
         {facts[kind].map((item:any,i:number)=><div key={item._id || `${kind}-${i}`} className="border rounded p-3 space-y-2">

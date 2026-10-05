@@ -9,7 +9,7 @@ import { Question } from '../questions/question.model';
 import { QuestionHistory as QuestionHistoryModel } from '../questions/question-history.model';
 import { Revision } from '../revisions/revision.model';
 import { buildDailyPlan } from '../profile/daily-plan';
-import InterviewProfile from '../profile/interview-profile.model';
+import { resolveActiveInterviewProfile } from '../resume/resume-context.service';
 import SkillGraph from '../skill-graph/skill-graph.model';
 import { NotFoundError, ConflictError, InternalError, RateLimitError } from '../../common/filters/error-filter';
 import { calendarService, recordQuestionInDailyCalendar, recomputeTotals } from '../calendar/calendar.service';
@@ -116,7 +116,7 @@ export const sessionService = {
       if (!existingSession) throw new ConflictError('Session changed before retry. Reload and try again.');
     }
     // Load user profile and data
-    const interviewProfile = await InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(userId) });
+    const interviewProfile = await resolveActiveInterviewProfile(userId);
     if (!interviewProfile?.onboardingCompleted) {
       throw new NotFoundError('Interview profile not found. Please complete onboarding first.');
     }
@@ -877,7 +877,7 @@ export const sessionService = {
     if (session.generationState === 'generating') {
       throw new ConflictError('Session generation is already in progress. Reload shortly.');
     }
-    const interviewProfile = await InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(userId) });
+    const interviewProfile = await resolveActiveInterviewProfile(userId);
     if (!interviewProfile?.onboardingCompleted) {
       throw new NotFoundError('Interview profile not found. Please complete onboarding first.');
     }

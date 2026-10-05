@@ -11,6 +11,7 @@ import SkillGraph from '../skill-graph/skill-graph.model';
 import { QuestionHistory } from './question-history.model';
 import { Question } from './question.model';
 import { structuredAIMeta } from '../../common/services/structured-ai';
+import Resume from '../resume/resume.model';
 import { BadRequestError, AIProviderError, RateLimitError, QuestionRejectedError, ApiError } from '../../common/filters/error-filter';
 
 export const normalizeQuestion = (text: string) => text.normalize('NFKC').toLowerCase()
@@ -82,7 +83,11 @@ const codingProblemSchema = z.object({
 export const generatedCodingBatchSchema = z.object({ problems: z.array(codingProblemSchema).min(1).max(10) });
 
 export async function buildQuestionPlan(userId: string, topic: string, count: number, type = 'technical') {
-  const profile = await InterviewProfile.findOne({ userId }).lean();
+  const activeResume: any = await Resume.findOne({ userId, isActive: true, isDeleted: false }).select('currentVersionId').lean();
+  const activeFacts: any = activeResume?.currentVersionId
+    ? await ResumeProfile.findOne({ userId, resumeVersionId: activeResume.currentVersionId }).select('_id').lean()
+    : null;
+  const profile = activeFacts ? await InterviewProfile.findOne({ userId, resumeProfileId: activeFacts._id }).lean() : null;
   if (!profile?.onboardingCompleted) throw new BadRequestError('Complete resume review and onboarding first');
   const [resume, graph, history, exposure] = await Promise.all([
     ResumeProfile.findOne({ _id: profile.resumeProfileId, userId }).lean(),
@@ -151,7 +156,10 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
   const seenTexts = [...allExposure.map(e=>e.question),...legacy.map(h=>h.questionSnapshot.question)];
   const seenHashes = new Set(seenTexts.map(questionHash));
   const visibility = { $or:[{ ownerUserId: { $exists:false }, provenance:'CURATED' },{ ownerUserId:userId }] };
-  const bank = await Question.find({ topic, qualityStatus:'approved', isHidden:false, isDeprecated:false,
+  // System-design plans may split into named focus areas (HLD, distributed
+  // systems), while the curated bank is grouped under the canonical topic.
+  // Pull the tagged design bank rather than silently yielding an empty section.
+  const bank = await Question.find({ ...(type === 'system_design' ? { isSystemDesign: true } : { topic }), qualityStatus:'approved', isHidden:false, isDeprecated:false,
     ...visibility }).limit(100).lean();
   const available = bank.filter(q=>!seenHashes.has(questionHash(q.question)) &&
     !seenTexts.some(t=>nearDuplicate(t,q.question)) &&

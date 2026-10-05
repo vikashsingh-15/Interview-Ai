@@ -60,3 +60,28 @@ test('active resume review can add a project and unlock practice after saving', 
   expect(onboardingSaved).toBe(true);
   expect(sessionStarted).toBe(true);
 });
+
+test('Enter adds a trimmed unique skill chip without submitting onboarding', async ({ page }) => {
+  let onboardingSaved = false;
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    let data: any = {};
+    if (path === '/api/auth/me') data = { id: 'fixture-user', name: 'Fixture Candidate', email: 'fixture@example.test' };
+    else if (path === '/api/profile/onboarding' && method === 'GET') data = { resume: { resume: { id: 'active-resume' }, profile: resumeFacts }, profile: null };
+    else if (path === '/api/profile/review' && method === 'PUT') data = route.request().postDataJSON();
+    else if (path === '/api/profile/onboarding' && method === 'POST') { onboardingSaved = true; data = {}; }
+    await route.fulfill({ json: { success: true, data } });
+  });
+  await page.goto('/onboarding');
+  const skillInput = page.getByRole('textbox', { name: 'Add a technical skill' });
+  await skillInput.fill('  Rust  ');
+  await skillInput.press('Enter');
+  await expect(page.getByLabel('Skill 2')).toHaveValue('Rust');
+  await expect(skillInput).toBeFocused();
+  await skillInput.fill('rust');
+  await skillInput.press('Enter');
+  await expect(page.getByLabel('Skill 2')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Save profile and start practice' })).toBeDisabled();
+  expect(onboardingSaved).toBe(false);
+});

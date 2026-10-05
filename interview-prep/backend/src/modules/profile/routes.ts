@@ -8,6 +8,7 @@ import aiConfig from '../../config';
 import logger from '../../config/logger';
 import { DifficultyChoice } from './interview-profile.model';
 import { resolveQuestionIdsForRecords } from '../calendar/calendar.service';
+import { resolveActiveInterviewProfile } from '../resume/resume-context.service';
 
 const router = Router();
 
@@ -37,9 +38,8 @@ router.get(
     if (!req.user) throw new ValidationError('Authentication required');
 
     const InterviewProfile = mongoose.model('InterviewProfile');
-    let profile = await InterviewProfile.findOne({
-      userId: new mongoose.Types.ObjectId(req.user.id),
-    }).lean();
+    let profile: any = (await resolveActiveInterviewProfile(req.user.id))?.toObject();
+    if (!profile) profile = await InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(req.user.id) }).sort({ updatedAt: -1 }).lean();
 
     if (!profile) {
       // Create a stub profile so preferences can be saved before onboarding
@@ -103,9 +103,8 @@ router.put(
     const InterviewProfile = mongoose.model('InterviewProfile');
 
     // Ensure a profile exists (same stub creation as GET)
-    const existing = await InterviewProfile.findOne({
-      userId: new mongoose.Types.ObjectId(req.user.id),
-    });
+    let existing: any = await resolveActiveInterviewProfile(req.user.id);
+    if (!existing) existing = await InterviewProfile.findOne({ userId: new mongoose.Types.ObjectId(req.user.id) }).sort({ updatedAt: -1 });
     const profile =
       existing ||
       (await InterviewProfile.create({

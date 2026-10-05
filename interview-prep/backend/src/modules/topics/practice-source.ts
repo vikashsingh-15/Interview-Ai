@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import ResumeProfile from '../resume/resume-profile.model';
 import Project from '../projects/project.model';
+import Resume from '../resume/resume.model';
 import { NotFoundError, ValidationError } from '../../common/filters/error-filter';
 
 export type PracticeSourceRef = { kind: 'project' | 'experience'; id: string };
@@ -14,6 +15,13 @@ export async function loadPracticeSource(userId: string, ref: PracticeSourceRef)
   if (ref.kind === 'project') {
     const p = await Project.findOne({ _id: ref.id, userId, isHidden: false }).lean();
     if (!p) throw new NotFoundError('Project not found');
+    if (p.isVerifiedFromResume && p.resumeProfileId) {
+      const active: any = await Resume.findOne({ userId, isActive: true, isDeleted: false }).select('currentVersionId').lean();
+      const profile: any = await ResumeProfile.findOne({ _id: p.resumeProfileId, userId }).select('resumeVersionId projects').lean();
+      const fact = profile?.projects.find((item: any) => String(item._id) === String(p.resumeEntryId) && item.isConfirmed && !item.isRemoved);
+      if (!active || String(active.currentVersionId) !== String(profile?.resumeVersionId) || !fact)
+        throw new NotFoundError('Project not found');
+    }
     return { ...ref, label: p.name, resumeProfileId: p.resumeProfileId, facts: {
       name: p.name, description: p.description, role: p.role, contribution: p.myContribution,
       technologies: p.technologies, architecture: p.architectureDescription,
@@ -25,9 +33,10 @@ export async function loadPracticeSource(userId: string, ref: PracticeSourceRef)
     } };
   }
   if (ref.kind !== 'experience') throw new ValidationError('Invalid practice source');
-  const profile = await ResumeProfile.findOne({ userId, experience: {
+  const active: any = await Resume.findOne({ userId, isActive: true, isDeleted: false }).select('currentVersionId').lean();
+  const profile = active?.currentVersionId ? await ResumeProfile.findOne({ userId, resumeVersionId: active.currentVersionId, experience: {
     $elemMatch: { _id: new mongoose.Types.ObjectId(ref.id), isRemoved: { $ne: true } },
-  } }).lean();
+  } }).lean() : null;
   const e = profile?.experience.find(entry => String(entry._id) === ref.id && !entry.isRemoved);
   if (!profile || !e) throw new NotFoundError('Experience not found');
   if (!e.isConfirmed) throw new ValidationError('Confirm this experience in resume review before practicing');
@@ -44,10 +53,11 @@ export async function loadPracticeSource(userId: string, ref: PracticeSourceRef)
 }
 
 export async function listExperience(userId: string) {
-  const profiles = await ResumeProfile.find({ userId }).sort({ updatedAt: -1 }).select('experience').lean();
-  return profiles.flatMap(p => p.experience.filter(e => !e.isRemoved).map(e => ({
-    ...e, resumeProfileId: String(p._id), _id: String(e._id),
-  })));
+  const active: any = await Resume.findOne({ userId, isActive: true, isDeleted: false }).select('currentVersionId').lean();
+  const profile: any = active?.currentVersionId ? await ResumeProfile.findOne({ userId, resumeVersionId: active.currentVersionId }).select('experience').lean() : null;
+  return profile ? profile.experience.filter((e: any) => e.isConfirmed && !e.isRemoved).map((e: any) => ({
+    ...e, resumeProfileId: String(profile._id), _id: String(e._id),
+  })) : [];
 }
 
 /** Literal evidence quotes make unsupported claims rejectable before persistence. */

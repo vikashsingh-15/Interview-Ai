@@ -8,6 +8,7 @@ import { uploadRateLimiter } from '../../common/middleware/rate-limit';
 import { resumeService } from './resume.service';
 import { Resume, ResumeVersion } from './resume.model';
 import ResumeProfile from './resume-profile.model';
+import InterviewProfile from '../profile/interview-profile.model';
 import { NotFoundError } from '../../common/filters/error-filter';
 import { z } from 'zod';
 
@@ -236,6 +237,50 @@ router.delete('/:id', authenticate, asyncHandler(async (req: AuthenticatedReques
 }));
 
 // Get resume profile
+const profilePayload = (profile: any) => ({
+  id: profile._id, versionNumber: profile.versionNumber, fullName: profile.fullName,
+  currentRole: profile.currentRole, totalExperienceMonths: profile.totalExperienceMonths,
+  email: profile.email, phone: profile.phone, location: profile.location,
+  linkedinUrl: profile.linkedinUrl, githubUrl: profile.githubUrl,
+  skills: profile.skills, experience: profile.experience,
+  projects: profile.projects, education: profile.education, certifications: profile.certifications,
+  confidence: profile.confidence, isModified: profile.userModified,
+});
+
+router.get('/:id/profile', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Resume not found');
+  const resume = await Resume.findOne({ _id: req.params.id, userId: req.user!.id, isDeleted: false }).lean();
+  if (!resume?.currentVersionId) throw new NotFoundError('Resume profile not found');
+  const profile = await ResumeProfile.findOne({ userId: req.user!.id, resumeVersionId: resume.currentVersionId }).lean();
+  if (!profile) throw new NotFoundError('Resume profile not found');
+  res.json({ success: true, data: profilePayload(profile) });
+}));
+
+router.put('/:id/profile', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Resume not found');
+  const resume = await Resume.findOne({ _id: req.params.id, userId: req.user!.id, isDeleted: false }).lean();
+  if (!resume?.currentVersionId) throw new NotFoundError('Resume profile not found');
+  const updateSchema = z.object({
+    fullName: z.string().max(200).optional(), currentRole: z.string().max(200).optional(),
+    totalExperienceMonths: z.number().int().min(0).max(1200).optional(),
+    skills: z.array(z.object({ name: z.string().trim().min(1).max(100), category: z.string(), confidence: z.number().optional(), isConfirmed: z.boolean(), isRemoved: z.boolean(), _id: z.string().optional() })).optional(),
+    experience: z.array(z.any()).optional(), projects: z.array(z.any()).optional(),
+    education: z.array(z.any()).optional(), certifications: z.array(z.any()).optional(),
+  });
+  const data = updateSchema.parse(req.body);
+  const profile = await resumeService.updateResumeProfile(req.user!.id, String(resume.currentVersionId), data);
+  const active = resume.isActive;
+  if (active) {
+    await resumeService.regenerateInterviewProfile(req.user!.id);
+    await InterviewProfile.updateOne({ userId: req.user!.id, resumeProfileId: profile._id }, { $set: { onboardingCompleted: Boolean(profile.userModified) } });
+  } else {
+    const interviewProfile = await resumeService.getOrCreateInterviewProfile(req.user!.id, profile._id);
+    interviewProfile.onboardingCompleted = Boolean(profile.userModified);
+    await interviewProfile.save();
+  }
+  res.json({ success: true, data: profilePayload(profile) });
+}));
+
 router.get(
   '/profile',
   authenticate,
@@ -259,28 +304,7 @@ router.get(
       throw new NotFoundError('Resume profile not found');
     }
 
-    res.json({
-      success: true,
-      data: {
-        id: profile._id,
-        versionNumber: profile.versionNumber,
-        fullName: profile.fullName,
-        currentRole: profile.currentRole,
-        totalExperienceMonths: profile.totalExperienceMonths,
-        email: profile.email,
-        phone: profile.phone,
-        location: profile.location,
-        linkedinUrl: profile.linkedinUrl,
-        githubUrl: profile.githubUrl,
-        skills: profile.skills.filter(s => !s.isRemoved),
-        experience: profile.experience,
-        projects: profile.projects,
-        education: profile.education,
-        certifications: profile.certifications,
-        confidence: profile.confidence,
-        isModified: profile.userModified,
-      },
-    });
+    res.json({ success: true, data: profilePayload(profile) });
   })
 );
 

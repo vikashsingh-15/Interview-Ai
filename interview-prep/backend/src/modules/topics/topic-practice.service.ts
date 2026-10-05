@@ -136,9 +136,10 @@ export async function listTopics(userId: string) {
  */
 export async function listPracticeSkills(userId: string): Promise<string[]> {
   const ownerId = new mongoose.Types.ObjectId(userId);
+  const activeResume = await resolveActiveResumeContext(userId);
   const [resumeProfile, interviewProfile] = await Promise.all([
-    ResumeProfile.findOne({ userId: ownerId }).sort({ updatedAt: -1 }).select('skills').lean(),
-    InterviewProfile.findOne({ userId: ownerId }).select('confirmedSkills').lean(),
+    Promise.resolve(activeResume?.profile || null),
+    activeResume ? InterviewProfile.findOne({ userId: ownerId, resumeProfileId: activeResume.profile._id }).select('confirmedSkills').lean() : Promise.resolve(null),
   ]);
 
   const names: string[] = [];
@@ -153,7 +154,7 @@ export async function listPracticeSkills(userId: string): Promise<string[]> {
   };
 
   for (const skill of (resumeProfile as any)?.skills ?? []) {
-    if (!skill?.isRemoved) push(skill?.name);
+    if (skill?.isConfirmed && !skill?.isRemoved) push(skill?.name);
   }
   for (const skill of (interviewProfile as any)?.confirmedSkills ?? []) push(skill);
   for (const topic of await listTopics(userId)) push(topic.topic);
