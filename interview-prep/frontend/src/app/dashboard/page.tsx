@@ -115,7 +115,7 @@ export default function DashboardPage() {
               {session?.userDayNumber && (
                 <Link href="/sessions/today">
                   <button className="inline-flex items-center px-6 py-3 text-base font-medium rounded-lg bg-brand-secondary text-white hover:bg-brand-secondary/90 transition-colors shadow-sm">
-                    Continue Day {session.userDayNumber}
+                    Continue to practice
                     <svg className="ml-2 w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
