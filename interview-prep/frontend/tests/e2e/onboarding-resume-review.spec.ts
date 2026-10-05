@@ -16,6 +16,8 @@ const resumeFacts = {
 
 test('active resume review can add a project and unlock practice after saving', async ({ page }) => {
   let savedReview: any;
+  let onboardingSaved = false;
+  let sessionStarted = false;
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
@@ -29,8 +31,8 @@ test('active resume review can add a project and unlock practice after saving', 
       data = { ...savedReview, _id: resumeFacts._id, resumeVersionId: resumeFacts.resumeVersionId,
         experience: savedReview.experience.map((entry: any) => ({ ...entry, _id: entry._id || '000000000000000000000014' })),
         projects: savedReview.projects.map((entry: any) => ({ ...entry, _id: entry._id || addedProjectId })) };
-    } else if (path === '/api/profile/onboarding' && method === 'POST') data = { onboardingCompleted: true };
-    else if (path === '/api/sessions/generate' && method === 'POST') data = { id: 'session' };
+    } else if (path === '/api/profile/onboarding' && method === 'POST') { onboardingSaved = true; data = { onboardingCompleted: true }; }
+    else if (path === '/api/sessions/generate' && method === 'POST') { sessionStarted = true; data = { id: 'session' }; }
     await route.fulfill({ json: { success: true, data } });
   });
 
@@ -53,4 +55,8 @@ test('active resume review can add a project and unlock practice after saving', 
   await expect(startPractice).toBeDisabled();
   await page.getByRole('button', { name: 'Save reviewed facts' }).click();
   await expect(startPractice).toBeEnabled();
+  await startPractice.click();
+  await expect(page).toHaveURL(/\/sessions\/today$/);
+  expect(onboardingSaved).toBe(true);
+  expect(sessionStarted).toBe(true);
 });

@@ -57,7 +57,11 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         const profileRes = await api.get('/profile/onboarding');
-        if (!profileRes.data.data.profile?.onboardingCompleted) { router.replace('/onboarding'); return; }
+        const { profile, resume } = profileRes.data.data;
+        const activeResumeProfileId = resume?.profile?._id;
+        const profileResumeChanged = activeResumeProfileId && profile?.resumeProfileId
+          && String(activeResumeProfileId) !== String(profile.resumeProfileId);
+        if (!profile?.onboardingCompleted || profileResumeChanged) { router.replace('/onboarding'); return; }
         const [sessionRes, analyticsRes] = await Promise.all([
           api.get('/sessions/today'),
           api.get('/analytics/overview'),

@@ -29,7 +29,7 @@ export default function OnboardingPage() {
     const { data } = await api.get('/profile/onboarding');
     const resume = data.data.resume?.profile;
     const profile = data.data.profile;
-    if (resume) { setFacts(resume); setReviewed(false); setMonths(resume.totalExperienceMonths || 0); }
+    if (resume) { setFacts(resume); setReviewed(Boolean(resume.userModified)); setMonths(resume.totalExperienceMonths || 0); }
     if (profile) {
       setRole(profile.targetRole || ''); setLevel(profile.targetLevel || '');
       setMonths(profile.actualExperienceMonths || 0); setCompanies((profile.targetCompanies || []).join(', '));

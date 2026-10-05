@@ -387,11 +387,15 @@ export const resumeService = {
   async activateResume(userId: string, resumeId: string): Promise<any> {
     const resume = await Resume.findOne({ _id: resumeId, userId, isDeleted: false });
     if (!resume) throw new NotFoundError('Resume not found');
+    const changedActiveResume = !resume.isActive;
     // The partial unique index is the final race-safe guard. The normal path is
     // deliberately small so it also works on MongoDB deployments without transactions.
     await Resume.updateMany({ userId, isDeleted: false, _id: { $ne: resume._id } }, { $set: { isActive: false } });
     resume.isActive = true;
     await resume.save();
+    if (changedActiveResume) {
+      await InterviewProfile.updateOne({ userId }, { $set: { onboardingCompleted: false } });
+    }
     return resume.toObject();
   },
 
@@ -504,13 +508,15 @@ export const resumeService = {
 
   // Regenerate interview profile from resume
   async regenerateInterviewProfile(userId: string): Promise<any> {
-    const resume = await Resume.findOne({ userId, isDeleted: false });
+    const ownerId = new mongoose.Types.ObjectId(userId);
+    const resume = await Resume.findOne({ userId: ownerId, isDeleted: false, isActive: true });
 
     if (!resume) {
       throw new NotFoundError('No resume found. Please upload a resume first.');
     }
 
     const resumeProfile = await ResumeProfile.findOne({
+      userId: ownerId,
       resumeVersionId: resume.currentVersionId,
     });
 

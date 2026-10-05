@@ -13,6 +13,8 @@ import User from '../../src/modules/auth/user.model';
 import { ResumeVersion } from '../../src/modules/resume/resume.model';
 import Resume from '../../src/modules/resume/resume.model';
 import ResumeProfile from '../../src/modules/resume/resume-profile.model';
+import InterviewProfile from '../../src/modules/profile/interview-profile.model';
+import { resumeService } from '../../src/modules/resume/resume.service';
 import { resumeStorage } from '../../src/common/services/resume-storage';
 import { deleteUserData } from '../../src/modules/auth/user-data.service';
 import DailyRecord from '../../src/modules/calendar/daily-record.model';
@@ -106,7 +108,18 @@ test('review uses active resume and assigns unique IDs to newly added projects a
     .attach('file',await docxResume('Second resume contains React and engineering background.'),{filename:'second.docx',contentType:mime});
   const secondVersion=second.body.data.resumeVersion.id;
   expect((await agent.post('/api/resume/parse/'+secondVersion)).status).toBe(200);
+  const firstFacts=await ResumeProfile.findOne({userId:user._id,resumeVersionId:firstVersion});
+  const secondFacts=await ResumeProfile.findOne({userId:user._id,resumeVersionId:secondVersion});
+  secondFacts!.skills[0].isConfirmed=true;
+  await secondFacts!.save();
+  const interviewProfile=await InterviewProfile.create({userId:user._id,resumeProfileId:firstFacts!._id,
+    onboardingCompleted:true,confirmedSkills:['Python']});
   expect((await agent.post('/api/resume/'+second.body.data.resume.id+'/activate')).status).toBe(200);
+  expect((await InterviewProfile.findById(interviewProfile._id))?.onboardingCompleted).toBe(false);
+  const regenerated=await resumeService.regenerateInterviewProfile(String(user._id));
+  expect(String(regenerated.resumeProfile._id)).toBe(String(secondFacts!._id));
+  expect(String(regenerated.interviewProfile.resumeProfileId)).toBe(String(secondFacts!._id));
+  expect(regenerated.interviewProfile.confirmedSkills).toEqual(['React']);
 
   const submitted={currentRole:'Engineer',skills:[],
     experience:[{company:'New Co',role:'Engineer',responsibilities:[],technologies:[],achievements:[],projectReferences:[],technicalClaims:[]}],
