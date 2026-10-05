@@ -1,4 +1,4 @@
-import { withAIFallback, hasAI } from './ai-provider';
+import { withAIFallback, hasAnyAI } from './ai-provider';
 import { createHash } from 'crypto';
 import mongoose, { Schema } from 'mongoose';
 import { z } from 'zod';
@@ -49,7 +49,7 @@ export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
   userId: string; purpose: string; version: string; system: string; context: unknown; schema: T;
   preferredProvider?: string;
 }): Promise<StructuredAIResult<z.output<T>>> {
-  if (!hasAI()) throw new Error('AI is not configured. Set AI_API_KEY and AI_MODEL.');
+  if (!hasAnyAI()) throw new Error('AI is not configured. Set AI_API_KEY and AI_MODEL, or configure a complete fallback provider.');
   const day = new Date().toISOString().slice(0, 10);
   await AIUsage.updateOne({ userId: input.userId, day }, { $setOnInsert: { requests: 0 } }, { upsert: true })
     .catch(e => { if (e.code !== 11000) throw e; });

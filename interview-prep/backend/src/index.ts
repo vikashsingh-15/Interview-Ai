@@ -18,6 +18,7 @@ import authRoutes from './modules/auth/routes';
 import resumeRoutes from './modules/resume/routes';
 import { ensureMultiResumeIndexes } from './modules/resume/resume-indexes';
 import { seedAllCodingProblems } from './scripts/seed-coding-questions';
+import { seedSystemDesignQuestions } from './scripts/seed-system-design-questions';
 import profileRoutes from './modules/profile/routes';
 import skillGraphRoutes from './modules/skill-graph/routes';
 import questionRoutes from './modules/questions/routes';
@@ -154,6 +155,12 @@ export async function startServer() {
       // The app can still serve other practice modes; keep startup resilient,
       // while making the failed repair visible to operators.
       logger.warn('Could not initialize curated coding bank', { error });
+    }
+    try {
+      const seeded = await seedSystemDesignQuestions();
+      logger.info('Curated system-design bank initialized', seeded);
+    } catch (error) {
+      logger.warn('Could not initialize curated system-design bank', { error });
     }
 
     logger.info('Connected to MongoDB');

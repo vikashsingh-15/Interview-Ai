@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
-import { hasAI, hasFallbackAI, getActiveProvider } from '../../common/services/ai-provider';
+import { hasAnyAI, hasFallbackAI, getActiveProvider } from '../../common/services/ai-provider';
 import { buildDailyPlan } from './daily-plan';
 import aiConfig from '../../config';
 import logger from '../../config/logger';
@@ -170,7 +170,7 @@ router.get(
     res.json({
       success: true,
       data: {
-        configured: hasAI(),
+        configured: hasAnyAI(),
         provider: aiConfig.ai.provider,
         model: aiConfig.ai.model,
         // The key itself is never exposed, only whether one is present.

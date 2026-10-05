@@ -209,7 +209,7 @@ export async function seedAllCodingProblems(): Promise<{ inserted: number; skipp
         // schema requires a description. Failing validation here aborted the
         // whole seed on the first insert, which is why the coding bank was
         // always empty and coding sections produced zero questions.
-        await CodingProblem.create({
+        const document = {
           ...problem,
           description: (problem as { description?: string }).description?.trim() || problemStatement(problem),
           // The curated table uses low/medium/high; the schema allows
@@ -220,13 +220,24 @@ export async function seedAllCodingProblems(): Promise<{ inserted: number; skipp
           // Tags carry pattern names that are not in the schema enum
           // (e.g. 'hashing'); keep only recognised ones so the seed completes.
           pattern: (problem.pattern || []).filter(p => PATTERN_ENUM.includes(p)),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
+        };
+        let didInsert = false;
+        try {
+          const result = await CodingProblem.updateOne(
+            { platform:problem.platform, problemId:problem.problemId },
+            { $setOnInsert:document }, { upsert:true, runValidators:true });
+          if (result.upsertedCount) didInsert = true;
+          else skipped++;
+        } catch (error:any) {
+          // Concurrent application replicas can seed at the same time; unique
+          // platform/problem IDs make that harmless and repeatable on restart.
+          if (error.code !== 11000) throw error;
+          skipped++;
+        }
 
         duplicates.add(compositeKey);
         existingKeys.add(compositeKey);
-        inserted++;
+        if (didInsert) inserted++;
       }
     }
     return { inserted, skipped, total: duplicates.size };

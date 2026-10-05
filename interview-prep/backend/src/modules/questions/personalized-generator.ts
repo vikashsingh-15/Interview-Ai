@@ -2,7 +2,7 @@ import mongoose, { Schema } from 'mongoose';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 import OpenAI from 'openai';
-import { aiProviderCandidates, hasFallbackAI } from '../../common/services/ai-provider';
+import { aiProviderCandidates, hasAnyAI, hasFallbackAI } from '../../common/services/ai-provider';
 import config from '../../config';
 import logger from '../../config/logger';
 import InterviewProfile from '../profile/interview-profile.model';
@@ -21,6 +21,54 @@ export function matchesQuestionTopic(topic: string, text: string): boolean {
   // This is the onboarding fallback category, not a phrase an answer must contain.
   if (normalizeQuestion(topic) === 'professional experience') return true;
   return (` ${normalizeQuestion(text)} `).includes(` ${normalizeQuestion(topic)} `);
+}
+export function matchesSystemDesignTopic(topic: string, question: string, answer: string, concepts: string[], archetype: string): boolean {
+  const text = normalizeQuestion([question, answer, ...(concepts || [])].join(' '));
+  if (matchesQuestionTopic(topic, text)) return true;
+  // Focus-area names (e.g. "Distributed systems") need not literally appear
+  // in a well-scoped architecture prompt. Accept clear architecture vocabulary,
+  // but do not let the design section take unrelated technical questions.
+  return /\b(architect|architecture|design|distributed|scalab|availability|reliability|throughput|latency|consistency|partition|replication|shard|capacity|resilien|fault tolerance|service boundary|data model)\w*\b/.test(text) &&
+    ['DESIGN', 'SCALABILITY', 'TRADE_OFF', 'DEEP_DIVE', 'FAILURE_SCENARIO'].includes(archetype);
+}
+export function hasValidProjectGrounding(topic: string, framing: string, factIds: number[], facts: any[]): boolean {
+  const projects = facts.filter((fact:any)=>fact?.kind === 'project');
+  if (!projects.length) return framing !== 'confirmed_experience' && factIds.length === 0;
+  return factIds.some(id => {
+    const fact = facts[id];
+    return fact?.kind === 'project' && normalizeQuestion(fact.name || '') === normalizeQuestion(topic);
+  });
+}
+export function buildProjectFallbackQuestions(topic: string, facts: any[], count: number, difficulty = 'mixed'): any[] {
+  const allProjects = facts.filter((fact:any)=>fact?.kind === 'project');
+  const project = allProjects.find((fact:any)=>normalizeQuestion(fact.name || '') === normalizeQuestion(topic));
+  if (allProjects.length && !project) return [];
+  const prompts = [
+    ['Architecture', 'Walk through the main components and data flow, and distinguish your own confirmed contribution from the surrounding system.'],
+    ['Decision trade-offs', 'Choose one important design decision, explain the alternatives, and state what evidence would justify the choice.'],
+    ['Validation', 'Explain how you would verify the key behavior end to end, including meaningful tests, observability, and failure cases.'],
+    ['Reliability', 'Identify a realistic failure mode, explain how you would detect it, and describe a safe recovery strategy.'],
+    ['Security', 'Review the trust boundaries and sensitive data, then explain the controls and tests that would reduce the main risks.'],
+    ['Performance', 'Describe how you would locate the dominant bottleneck, establish a baseline, and validate an optimization without guessing at metrics.'],
+    ['Evolution', 'Explain how you would change or scale the design while preserving compatibility, data integrity, and a rollback path.'],
+    ['Operations', 'Describe the signals and operational runbook you would need to diagnose an incident and restore service safely.'],
+    ['Data lifecycle', 'Explain data retention, deletion, and migration requirements, including how you would keep derived data consistent.'],
+    ['Capacity planning', 'Describe how you would estimate the workload, find the first scaling limit, and validate capacity before increasing traffic.'],
+  ];
+  const difficultyValue = ({easy:'EASY',medium:'MEDIUM',hard:'HARD',extra_hard:'EXPERT'} as any)[difficulty] || 'MEDIUM';
+  const factId = project ? facts.indexOf(project) : -1;
+  return prompts.slice(0, Math.max(0, count)).map(([subtopic, prompt]) => ({
+    question: project
+      ? `For your confirmed project "${topic}", ${prompt}`
+      : `Imagine designing a hypothetical portfolio project around "${topic}". ${prompt}`,
+    subtopic, concepts:['architecture','trade-offs','validation'], difficulty:difficultyValue,
+    archetype:subtopic === 'Decision trade-offs' ? 'TRADE_OFF' : subtopic === 'Reliability' ? 'FAILURE_SCENARIO' : 'DEEP_DIVE',
+    detailedAnswer: project
+      ? `Use only details you can verify from the confirmed resume entry for ${topic}. Start with the specific components or decisions you personally owned, then explain the mechanism and why it was chosen. Separate measured evidence from estimates; do not invent performance numbers, incidents, security controls, or outcomes. Describe how you would validate the behavior, what alternatives and failure cases matter, and what you would improve with more time. If a detail is not in the record, state what you would need to confirm before making that claim.`
+      : `Frame this strictly as a hypothetical design exercise, not as work you have already completed. Clarify the requirements and constraints first, propose a simple architecture, and explain data flow and component responsibilities. Compare at least one alternative, describe failure handling and security boundaries, and identify tests and operational signals. Make assumptions explicit and do not claim personal implementation experience, specific metrics, or completed outcomes.`,
+    estimatedAnswerTimeSeconds:240, factIds:project ? [factId] : [],
+    framing:project ? 'confirmed_experience' : 'hypothetical',
+  }));
 }
 export function nearDuplicate(a: string, b: string): boolean {
   if (questionHash(a) === questionHash(b)) return true;
@@ -103,9 +151,15 @@ export async function buildQuestionPlan(userId: string, topic: string, count: nu
     })),
     ...(resume?.projects || []).filter(p=>p.isConfirmed && !p.isRemoved).map(p=>({
       kind:'project', name:p.name, description:p.description, technologies:p.technologies,
-      responsibilities:p.responsibilities, claims:[...p.architectureClaims,...p.performanceClaims,...p.securityClaims],
+      responsibilities:p.responsibilities, claims:[...(p.architectureClaims || []),...(p.performanceClaims || []),...(p.securityClaims || [])],
     })),
-  ].slice(0,60).map((fact,id)=>({ id, ...fact }));
+  ];
+  // Project generation must not lose the relevant project claims behind a long
+  // skills/experience list when the prompt context is capped.
+  const orderedFacts = type === 'project'
+    ? [...facts.filter(f=>f.kind === 'project'), ...facts.filter(f=>f.kind !== 'project')]
+    : facts;
+  const confirmedFacts = orderedFacts.slice(0,60).map((fact,id)=>({ id, ...fact }));
   const weakConcepts = Object.entries((graph as any)?.concepts || {})
     .filter(([,v]:any)=>v.weak || v.questionCount > 0 && v.mastery < 0.4)
     .slice(0,10).map(([name])=>name);
@@ -114,7 +168,7 @@ export async function buildQuestionPlan(userId: string, topic: string, count: nu
     actualExperienceMonths:profile.actualExperienceMonths, industries:profile.industries || [],
     targetCompanies:profile.targetCompanies, companyCalibration: false,
     difficulty:profile.preferences.difficulty, excludedTopics:profile.preferences.excludedTopics,
-    focusTopics:profile.preferences.focusTopics, confirmedFacts:facts, weakConcepts,
+    focusTopics:profile.preferences.focusTopics, confirmedFacts, weakConcepts,
     recentPerformance:history.map(h=>({ question:h.questionSnapshot.question, score:h.finalScore,
       feedback:h.feedback, difficultyFeedback:h.difficultyFeedback, status:h.status,
       gaps:h.conceptsWeak, answer:h.answer?.slice(0,500) })),
@@ -126,7 +180,7 @@ export async function buildQuestionPlan(userId: string, topic: string, count: nu
 
 export async function questionEmbedding(text: string): Promise<number[] | undefined> {
   const model = config.ai.embeddingModel;
-  if (!model || !config.ai.apiKey) return undefined;
+  if (!model || !hasAnyAI()) return undefined;
   // Embeddings are best-effort: when the primary provider cannot serve, the
   // configured embedding model is tried on the fallback provider so dedup
   // quality survives a primary outage. Lexical checks always remain.
@@ -160,7 +214,7 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
   // systems), while the curated bank is grouped under the canonical topic.
   // Pull the tagged design bank rather than silently yielding an empty section.
   const bank = await Question.find({ ...(type === 'system_design' ? { isSystemDesign: true } : { topic }), qualityStatus:'approved', isHidden:false, isDeprecated:false,
-    ...visibility }).limit(100).lean();
+    ...visibility }).lean();
   const available = bank.filter(q=>!seenHashes.has(questionHash(q.question)) &&
     !seenTexts.some(t=>nearDuplicate(t,q.question)) &&
     (context.difficulty === 'mixed' || q.difficulty === ({easy:'EASY',medium:'MEDIUM',hard:'HARD',extra_hard:'EXPERT'} as any)[context.difficulty]));
@@ -188,10 +242,12 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     // portfolio prompt on the section's topic rather than a resume claim, so the
     // user's chosen count is still honoured without inventing their history.
     const hasProjectFacts = facts.some((f:any)=>f?.kind === 'project');
-    if (type === 'project' && hasProjectFacts && !factIds.some((id:number)=>facts[id]?.kind === 'project'))
+    if (type === 'project' && !hasValidProjectGrounding(topic, q.framing, factIds, facts))
       reasons.push('no_confirmed_project');
     const relevantText = normalizeQuestion(q.question+' '+q.detailedAnswer+' '+q.concepts.join(' '));
-    if (type !== 'project' && !matchesQuestionTopic(topic, relevantText) &&
+    if (type === 'system_design' && !matchesSystemDesignTopic(topic, q.question, q.detailedAnswer, q.concepts, q.archetype))
+      reasons.push('off_topic');
+    if (type !== 'project' && type !== 'system_design' && !matchesQuestionTopic(topic, relevantText) &&
         !factIds.some((id:number)=>matchesQuestionTopic(topic, JSON.stringify(facts[id] || {}))))
       reasons.push('off_topic');
     if (/^(what is|define)\b/i.test(q.question.trim()) && !/entry|intern|graduate|junior/i.test(context.targetLevel || ''))
@@ -233,9 +289,21 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     if (relaxed) note('accepted_relaxed');
     accepted.push(saved);
   };
+  const addLocalProjectGuides = async () => {
+    if (type !== 'project' || accepted.length >= count) return;
+    // Consider the full template set so previously exposed prompts do not
+    // prevent unused prompts later in the list from filling this section.
+    const guides = buildProjectFallbackQuestions(topic, context.confirmedFacts as any[], 10, context.difficulty);
+    for (const guide of guides) {
+      if (accepted.length >= count) break;
+      const reasons = screen(guide).filter(r=>!SOFT_REASONS.includes(r));
+      if (reasons.length) { reasons.forEach(note); continue; }
+      await persist(guide, guide.factIds, 'local-project-guide-v1', true);
+    }
+  };
 
   try {
-    if (accepted.length < count && config.ai.apiKey) {
+    if (accepted.length < count && hasAnyAI()) {
       const generate = async (preferredProvider?: string) => structuredAIMeta({ userId,
         purpose:'personalized-questions', version:'question-v3', preferredProvider,
         schema:generatedBatchSchema, context:{ ...context, count:count-accepted.length,
@@ -245,7 +313,7 @@ Use ONLY confirmedFacts for statements about the candidate's actual experience; 
 General/hypothetical scenarios must be explicitly framed as hypothetical, not things the candidate did.
 Generate different questions, not rewritten excluded questions. Concepts MAY repeat. Vary the scenario and reasoning task.
 Respect difficulty, target level, interview category and excluded topics; no default Java/SDE-2 assumption.
-No company provenance claims. No fabricated URLs. For project questions use a confirmed project and its actual claims.
+No company provenance claims. No fabricated URLs. For a project section, only use confirmed project facts whose name matches the requested topic and cite their factIds. If no matching confirmed project is supplied, create a hypothetical portfolio-design prompt with framing "hypothetical", factIds [], and do not imply the candidate built, shipped or contributed to it. For system_design sections, provide an architecture/design problem with explicit scale, reliability, data or trade-off reasoning.
 Return {"questions":[{"question":"specific, answerable prompt","subtopic":"...","concepts":["..."],
 "difficulty":"EASY|MEDIUM|HARD|EXPERT","archetype":"CONCEPTUAL|INTERNAL_WORKING|DEBUGGING|PRODUCTION_SCENARIO|TRADE_OFF|DESIGN|DEEP_DIVE",
 "detailedAnswer":"an interview-ready answer of at least 350 characters: direct response, technical mechanism, concrete example, trade-offs, and when alternatives are appropriate","estimatedAnswerTimeSeconds":180,
@@ -302,6 +370,7 @@ Do not generate executable coding problems here; coding uses a validated curated
           `The AI provider answered, but none of its questions passed our checks for "${topic}" (${reasons || 'no usable output'}). Nothing was repeated or invented. Press Regenerate to try again, or widen the topic or set difficulty to Mixed in Settings.`, rejections);
       }
     }
+    await addLocalProjectGuides();
     await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:accepted.length ? 'completed' : 'exhausted' });
   } catch(error) {
     await QuestionGenerationPlan.updateOne({ _id:plan._id }, { status:'failed' });
@@ -317,6 +386,11 @@ Do not generate executable coding problems here; coding uses a validated curated
       code: providerError?.code,
       requestId: providerError?.request_id || providerError?.requestId,
     });
+    if (type === 'project' && accepted.length < count) {
+      await addLocalProjectGuides();
+      if (accepted.length) await QuestionGenerationPlan.updateOne({ _id:plan._id }, {
+        status:'completed', reason:`AI fallback with grounded project guides: ${accepted.length}/${count}` });
+    }
     if (!accepted.length) {
       // Already-classified failures keep their own accurate message; only an
       // unclassified provider error is reported as provider unavailability.

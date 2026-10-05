@@ -19,12 +19,58 @@ import { resumeStorage } from '../../src/common/services/resume-storage';
 import { deleteUserData } from '../../src/modules/auth/user-data.service';
 import DailyRecord from '../../src/modules/calendar/daily-record.model';
 import CodingProblem from '../../src/modules/coding/coding-problem.model';
+import { seedAllCodingProblems } from '../../src/scripts/seed-coding-questions';
+import { seedSystemDesignQuestions } from '../../src/scripts/seed-system-design-questions';
 
 jest.setTimeout(120000);
 let db:MongoMemoryServer;
 const a=request.agent(app),b=request.agent(app);
 let userId:string,versionId:string,sessionId:string,mappingId:string;
 const mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+test('coding bank seed is valid and repeatable',async()=>{
+  try {
+    const first=await seedAllCodingProblems();
+    expect(first.inserted).toBeGreaterThan(0);
+    const rows=await CodingProblem.find({}).lean();
+    expect(rows.length).toBe(first.inserted);
+    expect(rows.every((p:any)=>p.description && p.frequency && Array.isArray(p.pattern))).toBe(true);
+    const second=await seedAllCodingProblems();
+    expect(second.inserted).toBe(0);
+    expect(second.skipped).toBeGreaterThanOrEqual(first.total);
+  } finally {
+    // This is a fresh ephemeral MongoMemoryServer used only by this test suite.
+    await CodingProblem.deleteMany({});
+  }
+});
+test('system-design seed initializes a reusable bank idempotently',async()=>{
+  const first=await seedSystemDesignQuestions();
+  expect(first.inserted).toBe(13);
+  const second=await seedSystemDesignQuestions();
+  expect(second.inserted).toBe(0);
+  expect(second.skipped).toBe(13);
+  expect(await Question.countDocuments({topic:'System design',isSystemDesign:true,provenance:'CURATED',qualityStatus:'approved'})).toBe(13);
+});
+test('project deep dives remain available without AI and never assert unconfirmed work',async()=>{
+  const previous={key:config.ai.apiKey,model:config.ai.model,fallbackKey:config.ai.fallback.apiKey,fallbackModel:config.ai.fallback.model};
+  config.ai.apiKey='';config.ai.model='';config.ai.fallback.apiKey='';config.ai.fallback.model='';
+  try {
+    const agent=request.agent(app);
+    const {userId:tid}=await onboard(agent,'project-fallback@example.test','Java','Portfolio Search');
+    expect((await agent.put('/api/profile/preferences').send({
+      dailyQuestions:0,codingCount:0,systemDesignCount:0,projectQuestions:2,
+    })).status).toBe(200);
+    expect((await agent.post('/api/sessions/generate')).status).toBe(200);
+    const today=(await agent.get('/api/sessions/today')).body.data;
+    const project=today.sections.find((s:any)=>s.type==='project');
+    expect(project.totalQuestions).toBe(2);
+    expect(project.notes).toBeFalsy();
+    expect(project.questions.every((q:any)=>q.isProjectInterview && /Portfolio Search/.test(q.question))).toBe(true);
+    expect(await Question.countDocuments({ownerUserId:tid,provenance:'RESUME_DERIVED'})).toBe(2);
+  } finally {
+    config.ai.apiKey=previous.key;config.ai.model=previous.model;
+    config.ai.fallback.apiKey=previous.fallbackKey;config.ai.fallback.model=previous.fallbackModel;
+  }
+});
 test('account data deletion removes only owned GridFS files and chunks',async()=>{
   const owner=new mongoose.Types.ObjectId();
   const key=String(owner)+'/delete.docx';

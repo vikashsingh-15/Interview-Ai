@@ -46,6 +46,9 @@ export function aiBaseURL():string {
 
 export function hasAI():boolean { return Boolean(config.ai.apiKey && config.ai.model); }
 
+/** True when at least one valid primary or fallback provider can serve requests. */
+export function hasAnyAI():boolean { return aiProviderCandidates().length > 0; }
+
 // A fallback provider is usable when both its key and model are set, and it
 // is not merely a copy of the primary.
 export function hasFallbackAI():boolean {

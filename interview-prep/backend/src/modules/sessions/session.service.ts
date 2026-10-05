@@ -259,9 +259,15 @@ export const sessionService = {
       section.questions = assigned.map(q=>q._id);
       section.totalQuestions = assigned.length;
       const needed = planned.count-assigned.length;
-      if (needed <= 0) continue;
+      if (needed <= 0) {
+        // A section can become fully populated after a retry; clear any stale
+        // warning left by the previous short generation.
+        if (section.notes) { section.notes = undefined; await session.save(); }
+        continue;
+      }
       section.notes = undefined;
       if (planned.type === 'coding') {
+        let codingFallbackError: string | undefined;
         const ownedSessions = await DailySession.find({ userId }).select('_id').lean();
         const prior = await SessionQuestion.find({ sessionId:{ $in:ownedSessions.map(s=>s._id) },
           'questionSnapshot.isCoding':true }).select('questionId').lean();
@@ -297,15 +303,21 @@ export const sessionService = {
             const generated = await generateCodingQuestions(userId, planned.topic, stillNeeded, sessionId);
             for (const question of generated) await add(question);
           } catch (error) {
-            section.notes = (error as Error).message;
+            codingFallbackError = (error as Error).message;
             logger.warn('Coding question generation failed', { userId, topic:planned.topic,
               bankSize, error:(error as Error).message });
           }
-          if (section.totalQuestions === 0) {
+          if (section.totalQuestions < planned.count) {
             const aiConfigured = hasAI() || hasFallbackAI();
-            section.notes = bankSize === 0
-              ? `The curated coding bank is empty. The backend now seeds it automatically at startup; check backend logs for "Curated coding bank initialized". ${aiConfigured ? 'The configured AI provider also returned no usable coding questions.' : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.'}`
-              : `No unseen coding problems remain in the curated bank. ${aiConfigured ? 'The configured AI provider returned no usable new questions.' : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.'}`;
+            const sourceNote = bankSize === 0
+              ? 'The curated coding bank is empty. The backend seeds it at startup; check for the "Curated coding bank initialized" log.'
+              : `The curated bank supplied ${section.totalQuestions} of ${planned.count} requested questions; it has no more unseen matches.`;
+            const aiNote = codingFallbackError
+              ? `AI generation failed: ${codingFallbackError}`
+              : aiConfigured
+                ? 'The configured AI provider returned no additional usable questions.'
+                : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.';
+            section.notes = `Only ${section.totalQuestions} of ${planned.count} coding questions could be generated. ${sourceNote} ${aiNote} No previously seen problems were repeated.`;
           }
         }
       } else {
@@ -320,8 +332,6 @@ export const sessionService = {
             error:(error as Error).message, code:(error as any)?.code });
         }
       }
-      if (planned.type === 'project' && !interviewProfile.confirmedProjects?.length && section.totalQuestions > 0)
-        section.notes = 'No confirmed resume projects yet, so these are portfolio-style prompts rather than questions about your own work. Confirm a project to make them resume-specific.';
       if (section.totalQuestions < planned.count && !section.notes) section.notes =
         `Only ${section.totalQuestions} of ${planned.count} questions could be generated. No repeats were inserted. ${hasAI() || hasFallbackAI() ? 'The configured AI provider did not return enough usable new questions.' : 'No AI provider is configured and the unseen curated questions for this topic have run out.'} Configure AI_API_KEY and AI_MODEL in the backend environment, or widen the topic and try again.`;
       await session.save();

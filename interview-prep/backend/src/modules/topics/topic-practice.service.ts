@@ -8,7 +8,7 @@ import { getOrCreateQuestionAnswer } from '../questions/answer.service';
 import { recordQuestionInDailyCalendar, recomputeTotals } from '../calendar/calendar.service';
 import DailyRecord from '../calendar/daily-record.model';
 import { NotFoundError, ValidationError, ConflictError } from '../../common/filters/error-filter';
-import { hasAI } from '../../common/services/ai-provider';
+import { hasAnyAI } from '../../common/services/ai-provider';
 import { structuredAIMeta } from '../../common/services/structured-ai';
 import { matchesQuestionTopic, nearDuplicate, questionHash } from '../questions/personalized-generator';
 import ResumeProfile from '../resume/resume-profile.model';
@@ -342,10 +342,10 @@ export async function generateTopicQuestions(params: {
 }): Promise<{ questions: any[]; message?: string }> {
   const { userId, topic, difficulties, questionTypes, count } = params;
   if (count <= 0) return { questions: [] };
-  if (!hasAI()) {
+  if (!hasAnyAI()) {
     return {
       questions: [],
-      message: 'The bank ran short for this selection. Set up an AI provider in Settings to generate fresh topic questions.',
+      message: 'The question bank ran short for this selection and no AI provider is configured. Set AI_API_KEY and AI_MODEL, or configure a complete fallback provider, in the backend environment to generate fresh topic questions.',
     };
   }
 

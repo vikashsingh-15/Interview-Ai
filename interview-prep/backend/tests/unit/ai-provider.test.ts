@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import config from '../../src/config';
-import { aiBaseURL, createAIClient, hasAI, hasFallbackAI, aiProviderCandidates, withAIFallback, setActiveProvider, getActiveProvider } from '../../src/common/services/ai-provider';
+import { aiBaseURL, createAIClient, hasAI, hasAnyAI, hasFallbackAI, aiProviderCandidates, withAIFallback, setActiveProvider, getActiveProvider } from '../../src/common/services/ai-provider';
 import { extractJsonObject } from '../../src/common/services/structured-ai';
 jest.mock('openai',()=>({__esModule:true,default:jest.fn().mockImplementation(()=>({}))}));
 beforeEach(()=>{
@@ -56,6 +56,13 @@ describe('fallback provider',()=>{
     expect(candidates[1]).toEqual(expect.objectContaining({
       apiKey:'fallback-key',model:'fallback-model',
       baseURL:'https://generativelanguage.googleapis.com/v1beta/openai/'}));
+  });
+  test('a complete fallback alone is enough to generate questions',()=>{
+    config.ai.apiKey='';config.ai.model='';
+    config.ai.fallback.provider='gemini';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';
+    expect(hasAI()).toBe(false);
+    expect(hasAnyAI()).toBe(true);
+    expect(aiProviderCandidates().map(c=>c.name)).toEqual(['gemini']);
   });
   test('fallback provider is tried first once it has taken over (sticky)',()=>{
     config.ai.fallback.provider='gemini';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';

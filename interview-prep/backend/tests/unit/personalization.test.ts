@@ -1,4 +1,5 @@
-import { normalizeQuestion, questionHash, nearDuplicate, cosine, generatedBatchSchema, matchesQuestionTopic } from '../../src/modules/questions/personalized-generator';
+import { normalizeQuestion, questionHash, nearDuplicate, cosine, generatedBatchSchema, matchesQuestionTopic,
+  matchesSystemDesignTopic, hasValidProjectGrounding, buildProjectFallbackQuestions } from '../../src/modules/questions/personalized-generator';
 import { parseResumeBuffer, extractResumeText, extractedResumeSchema } from '../../src/modules/resume/resume-parser';
 import * as structuredAiModule from '../../src/common/services/structured-ai';
 import config from '../../src/config';
@@ -35,6 +36,29 @@ describe('resume extraction and question identity',()=>{
   });
   test('same concept with a different reasoning problem is allowed',()=>{
     expect(nearDuplicate('How would you invalidate stale Redis cache entries?', 'In Redis, explain memory eviction when the configured limit is reached.')).toBe(false);
+  });
+  test('system-design focus areas accept architecture prompts without exact focus wording',()=>{
+    expect(matchesSystemDesignTopic('Distributed systems', 'Design a highly available message service',
+      'Partition data by conversation, replicate across regions, and reason about consistency and failure recovery.',
+      ['availability','replication'], 'DESIGN')).toBe(true);
+    expect(matchesSystemDesignTopic('Distributed systems', 'Explain Java generics',
+      'Describe type erasure and bounded wildcards.', ['generics'], 'CONCEPTUAL')).toBe(false);
+  });
+  test('project grounding requires the matching confirmed project, or an explicitly hypothetical prompt',()=>{
+    const facts=[{id:0,kind:'project',name:'Cortex',description:'RAG assistant'}];
+    expect(hasValidProjectGrounding('Cortex','confirmed_experience',[0],facts)).toBe(true);
+    expect(hasValidProjectGrounding('WriteFlow','confirmed_experience',[0],facts)).toBe(false);
+    expect(hasValidProjectGrounding('Java project design','hypothetical',[],[])).toBe(true);
+    expect(hasValidProjectGrounding('Java project design','confirmed_experience',[],[])).toBe(false);
+  });
+  test('project fallback questions are grounded or explicitly hypothetical and include study guidance',()=>{
+    const grounded=buildProjectFallbackQuestions('Cortex',[{id:0,kind:'project',name:'Cortex',description:'RAG assistant'}],2,'hard');
+    expect(grounded).toHaveLength(2);
+    expect(grounded[0]).toMatchObject({factIds:[0],framing:'confirmed_experience',difficulty:'HARD'});
+    expect(grounded[0].detailedAnswer.length).toBeGreaterThan(350);
+    const hypothetical=buildProjectFallbackQuestions('Java',[{id:0,kind:'skill',name:'Java'}],1);
+    expect(hypothetical[0]).toMatchObject({factIds:[],framing:'hypothetical'});
+    expect(hypothetical[0].question).toContain('hypothetical');
   });
   test('semantic cosine handles equal vectors and dimension mismatch',()=>{
     expect(cosine([1,0],[1,0])).toBe(1);expect(cosine([1],[1,0])).toBe(0);
