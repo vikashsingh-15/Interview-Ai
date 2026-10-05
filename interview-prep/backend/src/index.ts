@@ -16,6 +16,7 @@ import { notFoundHandler } from './common/filters/not-found-filter';
 
 import authRoutes from './modules/auth/routes';
 import resumeRoutes from './modules/resume/routes';
+import { ensureMultiResumeIndexes } from './modules/resume/resume-indexes';
 import profileRoutes from './modules/profile/routes';
 import skillGraphRoutes from './modules/skill-graph/routes';
 import questionRoutes from './modules/questions/routes';
@@ -144,6 +145,7 @@ export async function startServer() {
     validateProductionConfig();
     // Connect to MongoDB
     await mongoose.connect(config.database.uri, config.database.options);
+    await ensureMultiResumeIndexes();
 
     logger.info('Connected to MongoDB');
 

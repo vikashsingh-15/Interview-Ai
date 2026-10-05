@@ -88,7 +88,7 @@ export const resumeService = {
   async uploadResume(
     userId: string,
     file: Express.Multer.File,
-    options: { resumeId?: string; name?: string; targetRole?: string } = {}
+    options: { resumeId?: string; name?: string; targetRole?: string; createNew?: boolean } = {}
   ): Promise<{ resumeVersion: any; resume: any }> {
     // Validate file
     this.validateFile(file);
@@ -96,23 +96,23 @@ export const resumeService = {
     // Calculate checksum
     const checksum = this.calculateChecksum(file.buffer);
 
-    // Atomically allocate a version number; concurrent uploads cannot overwrite each other.
+    // A new Settings upload creates a new resume. Legacy upload callers may
+    // still add a version to the active resume.
     let resume = options.resumeId
       ? await Resume.findOne({ _id: options.resumeId, userId, isDeleted: false })
-      : await Resume.findOne({ userId, isActive: true, isDeleted: false });
+      : options.createNew ? null : await Resume.findOne({ userId, isActive: true, isDeleted: false });
     if (options.resumeId && !resume) throw new NotFoundError('Resume not found');
+    const createdResume = !resume;
     if (!resume) {
       const hasResume = await Resume.exists({ userId, isDeleted: false });
+      const hasActiveResume = await Resume.exists({ userId, isDeleted: false, isActive: true });
       resume = await Resume.create({
         userId,
         name: options.name?.trim() || `Resume ${hasResume ? '' : '1'}`.trim(),
         targetRole: options.targetRole?.trim(),
-        isActive: !hasResume,
+        isActive: !hasActiveResume,
         uploadDate: new Date(),
       });
-    } else if (!options.resumeId && options.name?.trim()) {
-      resume.name = options.name.trim();
-      if (options.targetRole !== undefined) resume.targetRole = options.targetRole.trim();
     }
     resume.totalVersions += 1;
     // Existing deployments have a unique (userId, versionNumber) index from
@@ -123,7 +123,14 @@ export const resumeService = {
     const versionNumber = Math.max(resume.totalVersions, Number(latestVersion?.versionNumber || 0) + 1);
 
     // Save file
-    const { storagePath, storageKey, originalFilename, mimeType, fileSize } = await this.saveFile(file, userId);
+    let storedFile;
+    try {
+      storedFile = await this.saveFile(file, userId);
+    } catch (error) {
+      if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
+      throw error;
+    }
+    const { storagePath, storageKey, originalFilename, mimeType, fileSize } = storedFile;
 
     // Create resume version
     let resumeVersion;
@@ -144,12 +151,20 @@ export const resumeService = {
 
     } catch(error) {
       await resumeStorage.delete(storageKey);
+      if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
       throw error;
     }
 
     resume.versions.push(resumeVersion._id);
     resume.currentVersionId = resumeVersion._id;
-    await resume.save();
+    try {
+      await resume.save();
+    } catch (error) {
+      await ResumeVersion.deleteOne({ _id: resumeVersion._id });
+      await resumeStorage.delete(storageKey);
+      if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
+      throw error;
+    }
     await InterviewProfile.updateOne({userId},{$set:{onboardingCompleted:false}});
 
     logger.info('Resume uploaded', {

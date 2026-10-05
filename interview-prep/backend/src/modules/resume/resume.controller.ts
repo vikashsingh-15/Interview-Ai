@@ -61,6 +61,7 @@ router.post(
       resumeId: typeof req.body.resumeId === 'string' ? req.body.resumeId : undefined,
       name: typeof req.body.name === 'string' ? req.body.name : undefined,
       targetRole: typeof req.body.targetRole === 'string' ? req.body.targetRole : undefined,
+      createNew: req.body.createNew === 'true',
     });
 
     res.status(201).json({

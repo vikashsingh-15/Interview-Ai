@@ -6,9 +6,14 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import config from '../../src/config';
-import { ResumeVersion } from '../../src/modules/resume/resume.model';
+import Resume, { ResumeVersion } from '../../src/modules/resume/resume.model';
+import { ensureMultiResumeIndexes } from '../../src/modules/resume/resume-indexes';
 import { migrateResumeStorage } from '../../src/scripts/migrate-resume-storage';
 import { resumeService } from '../../src/modules/resume/resume.service';
+import request from 'supertest';
+import { app } from '../../src/index';
+import User from '../../src/modules/auth/user.model';
+import { createSession } from '../../src/common/middleware/auth';
 
 jest.setTimeout(120000);
 let db:MongoMemoryServer;
@@ -59,12 +64,14 @@ test('local migration verifies bytes, preserves originals and is idempotent',asy
 test('metadata creation failure removes the newly uploaded GridFS file',async()=>{
   const bytes=pdfResume('Test resume');
   const spy=jest.spyOn(ResumeVersion,'create').mockRejectedValueOnce(new Error('fixture metadata failure'));
+  const userId=String(new mongoose.Types.ObjectId());
   try {
-    await expect(resumeService.uploadResume(String(new mongoose.Types.ObjectId()),{
+    await expect(resumeService.uploadResume(userId,{
       buffer:bytes,size:bytes.length,originalname:'cleanup.pdf',mimetype:'application/pdf',
     } as Express.Multer.File)).rejects.toThrow('fixture metadata failure');
     expect(await mongoose.connection.db!.collection('resumeFiles.files').countDocuments()).toBe(0);
     expect(await mongoose.connection.db!.collection('resumeFiles.chunks').countDocuments()).toBe(0);
+    expect(await Resume.countDocuments({userId})).toBe(0);
   } finally {spy.mockRestore();}
 });
 test('corrupt local migration keeps metadata local and never removes the original',async()=>{
@@ -89,4 +96,43 @@ test('failed upload stream leaves no GridFS files or chunks',async()=>{
     expect(await mongoose.connection.db!.collection('resumeFiles.files').countDocuments()).toBe(0);
     expect(await mongoose.connection.db!.collection('resumeFiles.chunks').countDocuments()).toBe(0);
   } finally {spy.mockRestore();}
+});
+
+test('a user can upload two named resumes without replacing the first', async()=>{
+  const userId=String(new mongoose.Types.ObjectId());
+  const makeFile=(name:string)=>{const bytes=pdfResume(name);return {buffer:bytes,size:bytes.length,originalname:`${name}.pdf`,mimetype:'application/pdf'} as Express.Multer.File;};
+  const first=await resumeService.uploadResume(userId,makeFile('SDE'),{name:'SDE',createNew:true});
+  const second=await resumeService.uploadResume(userId,makeFile('DataEngineer'),{name:'Data Engineer',createNew:true});
+  expect(String(second.resume._id)).not.toBe(String(first.resume._id));
+  expect(String((await Resume.findById(first.resume._id))?.currentVersionId)).toBe(String(first.resumeVersion._id));
+  expect((await resumeService.listResumes(userId)).map(r=>r.name)).toEqual(['SDE','Data Engineer']);
+  await resumeService.activateResume(userId,String(second.resume._id));
+  expect(await Resume.countDocuments({userId,isActive:true,isDeleted:false})).toBe(1);
+  expect((await resumeService.getResume(userId))?.resume.id.toString()).toBe(String(second.resume._id));
+});
+
+test('legacy unique user index is removed without touching other indexes',async()=>{
+  // This suite uses an isolated in-memory database; clear its earlier fixtures
+  // so the old single-resume constraint can be recreated faithfully.
+  await Resume.deleteMany({});
+  await Resume.collection.createIndex({userId:1},{unique:true,name:'legacy_single_resume_user'});
+  await ensureMultiResumeIndexes();
+  const indexes=await Resume.collection.indexes();
+  expect(indexes.some(i=>i.name==='legacy_single_resume_user')).toBe(false);
+  expect(indexes.some(i=>i.unique && i.partialFilterExpression?.isActive===true)).toBe(true);
+});
+
+test('Settings upload endpoint creates a second resume for the same signed-in user', async()=>{
+  const user=await User.create({email:'two-resumes@example.test',name:'Candidate',googleId:'two-resumes-fixture',isEmailVerified:true});
+  const agent=request.agent(app);
+  agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
+  for(const name of ['SDE','Data Engineer']) {
+    const response=await agent.post('/api/resume/upload').field('name',name).field('createNew','true')
+      .attach('file',await docxResume(`Candidate knows ${name} and Python.`),{filename:`${name}.docx`,contentType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    expect(response.status).toBe(201);
+  }
+  const list=await agent.get('/api/resume/list');
+  expect(list.status).toBe(200);
+  expect(list.body.data.map((r:any)=>r.name).sort()).toEqual(['Data Engineer','SDE']);
+  expect((await Resume.find({userId:user._id,isDeleted:false})).length).toBe(2);
 });
