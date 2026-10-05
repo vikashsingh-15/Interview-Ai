@@ -197,7 +197,13 @@ export function localExtraction(text: string) {
     const stack = projectLines[i].match(/^stack\s*:\s*(.+)$/i); if (!stack) continue;
     const name = projectLines[i - 1].replace(/\s+(?:•|â€¢)\s+.*$/, '').replace(/\s{2,}[^\s].*$/, '').trim(); if (!name) continue;
     const technologies = stack[1].split(/\s*[·|;,]\s*/).map(value => value.trim()).filter(Boolean);
-    projects.push({ name, description: `Explicit resume project. Stack: ${stack[1]}`, technologies, responsibilities: [], architectureClaims: [], features: [], performanceClaims: [], metrics: [], securityClaims: [], technicalDecisions: [] });
+    const detailLines: string[] = [];
+    for (let j=i+1;j<projectLines.length;j++) {
+      if (/^stack\s*:/i.test(projectLines[j]) || /^stack\s*:/i.test(projectLines[j+1] || '')) break;
+      detailLines.push(projectLines[j]);
+    }
+    projects.push({ name, description: detailLines.join(' ').trim().slice(0, 4000) || `Stack: ${stack[1]}`, technologies, responsibilities: detailLines,
+      architectureClaims: [], features: [], performanceClaims: [], metrics: [], securityClaims: [], technicalDecisions: [] });
   }
   return extractedResumeSchema.parse({
     fullName: '', email: text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '',

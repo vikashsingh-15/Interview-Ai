@@ -50,10 +50,12 @@ Jio Platforms Limited — Data Engineer Dec 2023 – Present
 PROJECTS
 Procurement & Inventory Analytics on Azure Databricks • Jio Telco
 Stack: Azure Databricks · PySpark · Delta Lake
+Built an inventory analytics fact from SAP tables using Delta MERGE.
 EDUCATION
 B.Tech`);
     expect(facts.experience[0]).toMatchObject({company:'Jio Platforms Limited',role:'Data Engineer',currentRole:true});
     expect(facts.projects[0]).toMatchObject({name:'Procurement & Inventory Analytics on Azure Databricks',technologies:['Azure Databricks','PySpark','Delta Lake']});
+    expect(facts.projects[0].description).toContain('inventory analytics fact');
   });
   test('invalid files and unreadable content are rejected',async()=>{
     await expect(extractResumeText(Buffer.from('not a PDF'),'application/pdf')).rejects.toThrow('Invalid PDF');

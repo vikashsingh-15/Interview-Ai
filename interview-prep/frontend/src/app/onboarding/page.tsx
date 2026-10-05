@@ -8,6 +8,15 @@ import Link from 'next/link';
 const inputStyle = 'w-full rounded border border-gray-300 p-2 text-gray-900 bg-white';
 const buttonStyle = 'rounded bg-blue-700 text-white px-4 py-2 disabled:opacity-50';
 const list = (text:string) => text.split(',').map(s=>s.trim()).filter(Boolean);
+const staleDraft = (value:unknown) => typeof value === 'string' && (
+  value.startsWith('No confirmed resume evidence is available') ||
+  value.startsWith('Confirm at least one related project') ||
+  value.startsWith('Draft based on your confirmed resume facts:'));
+const emptyAnswer = (value:unknown) => Array.isArray(value)
+  ? value.length === 0 || value.every(v => !String(v).trim() || staleDraft(v))
+  : !String(value || '').trim() || staleDraft(value);
+const answerFields = { experience:['responsibilities','achievements','technicalClaims'],
+  projects:['responsibilities','architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features'] } as const;
 export default function OnboardingPage() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
@@ -56,44 +65,42 @@ export default function OnboardingPage() {
     setReviewed(false);
     setFacts((previous:any)=>({...previous,[kind]:previous[kind].map((item:any,i:number)=>i===index?{...item,...patch}:item)}));
   }
-  async function generateAllAnswers() {
+  async function generateAnswers(targetKind?:'experience'|'projects', targetIndex?:number, targetField?:string) {
     if (!facts) return;
     setGeneratingAnswers(true); setMessage('');
+    setFacts((previous:any)=>({...previous,
+      experience:previous.experience.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : value]))),
+      projects:previous.projects.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : staleDraft(value) ? '' : value]))),
+    }));
     try {
-      const questions:any[] = [];
-      facts.experience.forEach((item:any,i:number) => ['responsibilities','achievements','technicalClaims'].forEach(field => questions.push({ id:`experience-${i}-${field}`, prompt:`For ${item.role || 'this work experience'} at ${item.company || 'this company'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
-      facts.projects.forEach((item:any,i:number) => ['description','responsibilities','architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features'].forEach(field => questions.push({ id:`project-${i}-${field}`, prompt:`For the project ${item.name || 'this project'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
-      if (!questions.length) { setMessage('Add or confirm a project or work experience before generating answers.'); return; }
-      const confirmedFacts = {
-        currentRole: facts.currentRole || '',
-        // These are resume-extracted grounding facts, not confirmation state.
-        // The generated result is still only a draft until the user reviews it.
-        skills: facts.skills.filter((item:any)=>!item.isRemoved),
-        experience: facts.experience.filter((item:any)=>!item.isRemoved),
-        projects: facts.projects.filter((item:any)=>!item.isRemoved),
-      };
-      const response = await api.post('/profile/onboarding/answer-drafts',{questions,confirmedFacts});
-      const answers = response.data.data.answers || [];
-      setFacts((previous:any) => {
-        const next = {...previous, experience:previous.experience.map((item:any)=>({...item})), projects:previous.projects.map((item:any)=>({...item}))};
-        for (const answer of answers) {
-          const match = String(answer.id).match(/^(experience|project)-(\d+)-(.+)$/); if (!match || !answer.draft) continue;
-          const collection = match[1] === 'experience' ? next.experience : next.projects;
-          const index = Number(match[2]); const field = match[3];
-          const oldValue=collection[index]?.[field];
-          const oldFallback=typeof oldValue==='string' && oldValue.startsWith('No confirmed resume evidence is available');
-          const oldFallbackArray=Array.isArray(oldValue) && oldValue.length===1 && String(oldValue[0]).startsWith('No confirmed resume evidence is available');
-          if (!collection[index] || ((Array.isArray(oldValue) && oldValue.length || typeof oldValue==='string' && oldValue.trim()) && !oldFallback && !oldFallbackArray)) continue;
-          collection[index][field] = field === 'description' ? answer.draft : [answer.draft];
+      let generated=0, unsupported=0;
+      for (const kind of (targetKind ? [targetKind] : ['experience','projects']) as ('experience'|'projects')[]) {
+        for (let i=0;i<facts[kind].length;i++) {
+          if (targetIndex !== undefined && i!==targetIndex || facts[kind][i].isRemoved) continue;
+          const item=facts[kind][i];
+          const fields=answerFields[kind].filter(field => (!targetField || field===targetField) && emptyAnswer(item[field]));
+          if (!fields.length) continue;
+          const questions=fields.map(field=>({id:field,kind:field,prompt:`Draft ${field.replace(/([A-Z])/g,' $1')} for ${kind==='projects' ? item.name : `${item.role} at ${item.company}`}. Use the entry description and resume excerpt. Leave unsupported claims empty.`}));
+          const response=await api.post('/profile/onboarding/answer-drafts',{entryType:kind==='projects'?'project':'experience',entryIndex:i,
+            entry:{name:item.name,description:item.description,company:item.company,role:item.role,technologies:item.technologies || [],
+              responsibilities:(item.responsibilities || []).filter((v:string)=>!staleDraft(v)),achievements:(item.achievements || []).filter((v:string)=>!staleDraft(v)),technicalClaims:(item.technicalClaims || []).filter((v:string)=>!staleDraft(v))},questions});
+          const answers=response.data.data.answers || [];
+          generated += answers.filter((answer:any)=>fields.includes(answer.id) && answer.draft?.trim()).length;
+          unsupported += answers.filter((answer:any)=>fields.includes(answer.id) && !answer.draft?.trim()).length;
+          setFacts((previous:any)=>({...previous,[kind]:previous[kind].map((current:any,j:number)=> {
+            if(j!==i)return current;
+            const updated={...current};
+            for(const answer of answers) {
+              if(!fields.includes(answer.id) || !emptyAnswer(updated[answer.id]))continue;
+              if(answer.draft?.trim()) updated[answer.id]=[answer.draft.trim()];
+              else updated[answer.id]=[];
+            }
+            return updated;
+          })}));
         }
-        return next;
-      });
-      const mode=response.data.data.mode;
-      setReviewed(false); setMessage(mode==='ai'
-        ? 'AI drafts were added to empty answer fields. Review and edit every draft before saving.'
-        : mode==='fallback'
-          ? 'AI was unavailable, so conservative drafts were added. Configure the AI provider for tailored answers.'
-          : 'No confirmed project or work-experience evidence was available for these answers.');
+      }
+      setReviewed(false);
+      setMessage(`${generated} AI draft${generated===1?'':'s'} added. ${unsupported} field${unsupported===1?'':'s'} had no supporting resume detail and remain empty. Review every answer before saving.`);
     } catch (e:any) { setMessage(e.response?.data?.error?.message || 'Could not generate answer drafts.'); }
     finally { setGeneratingAnswers(false); }
   }
@@ -149,9 +156,9 @@ export default function OnboardingPage() {
             <label className="block">Related project names (one per line)<textarea className={inputStyle} value={(item.projectReferences || []).join('\n')} onChange={e=>updateEntry(kind,i,{projectReferences:e.target.value.split('\n').filter(Boolean)})} /></label>
           </>}
           <label className="block">Your contribution (one per line)<textarea className={inputStyle} value={(item.responsibilities || []).join('\n')} onChange={e=>updateEntry(kind,i,{responsibilities:e.target.value.split('\n').filter(Boolean)})} /></label>
-          {(kind==='projects'?['architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features']:['achievements','technicalClaims']).map(field=><label key={field} className="block text-sm">{field.replace(/([A-Z])/g,' $1')} (one per line)
+          {(kind==='projects'?['architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features']:['achievements','technicalClaims']).map(field=><div key={field} className="text-sm"><label className="block">{field.replace(/([A-Z])/g,' $1')} (one per line)
             <textarea className={inputStyle} value={(item[field] || []).join('\n')} onChange={e=>updateEntry(kind,i,{[field]:e.target.value.split('\n').filter(Boolean)})} />
-          </label>)}
+          </label><button className="text-blue-700 underline disabled:opacity-50" disabled={generatingAnswers || busy || !emptyAnswer(item[field])} onClick={()=>void generateAnswers(kind as 'experience'|'projects',i,field)}>Generate with AI</button></div>)}
           <p className="text-sm">Other extracted claims: {JSON.stringify(kind==='projects'?{architecture:item.architectureClaims,performance:item.performanceClaims,security:item.securityClaims,metrics:item.metrics}:{achievements:item.achievements,claims:item.technicalClaims})}</p>
           <button className="underline text-blue-700" onClick={()=>updateEntry(kind,i,kind==='projects'?{architectureClaims:[],performanceClaims:[],securityClaims:[],metrics:[]}:{achievements:[],technicalClaims:[]})}>Remove these additional claims</button>
           <div className="flex gap-4"><label><input type="checkbox" checked={item.isConfirmed && !item.isRemoved} onChange={e=>updateEntry(kind,i,{isConfirmed:e.target.checked,isRemoved:false})} /> Confirm this edited entry and its claims</label>
@@ -168,7 +175,7 @@ export default function OnboardingPage() {
         setReviewed(true);setMessage('Review saved. Only confirmed entries will personalize questions.');
         if (!plan.length) setPlan([{title:'Professional practice',topic:response.data.data.skills.find((s:any)=>s.isConfirmed&&!s.isRemoved)?.name || response.data.data.currentRole || 'Professional experience',type:'technical',count:5}]);
       })}>Save reviewed facts</button>
-      <button className="rounded border border-blue-700 text-blue-700 px-4 py-2 disabled:opacity-50" disabled={busy || generatingAnswers || !reviewed} onClick={()=>void generateAllAnswers()}>
+      <button className="rounded border border-blue-700 text-blue-700 px-4 py-2 disabled:opacity-50" disabled={busy || generatingAnswers} onClick={()=>void generateAnswers()}>
         {generatingAnswers ? 'Generating answer drafts…' : 'Generate all empty answers with AI'}
       </button>
       <p className="text-xs text-gray-600">Generated answers are drafts only. Verify that every statement is true before saving them as reviewed facts.</p>

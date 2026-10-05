@@ -21,6 +21,7 @@ import DailyRecord from '../../src/modules/calendar/daily-record.model';
 import CodingProblem from '../../src/modules/coding/coding-problem.model';
 import { seedAllCodingProblems } from '../../src/scripts/seed-coding-questions';
 import { seedSystemDesignQuestions } from '../../src/scripts/seed-system-design-questions';
+import * as structuredAiModule from '../../src/common/services/structured-ai';
 
 jest.setTimeout(120000);
 let db:MongoMemoryServer;
@@ -140,6 +141,27 @@ test('Google-session user, genuine upload, review and generic-role onboarding',a
   const planB=await buildQuestionPlan(pb,'React',1);
   expect(JSON.stringify(pa.confirmedFacts)).toContain('Python');
   expect(JSON.stringify(planB.confirmedFacts)).not.toContain('Python');
+});
+test('onboarding drafts use the selected project description and surface AI failure without filling placeholders',async()=>{
+  const previousKey=config.ai.apiKey, previousModel=config.ai.model;
+  const requestBody={entryType:'project',entryIndex:0,
+    entry:{name:'Payments Platform',description:'Built a payment pipeline using Python and SQL.',technologies:['Python','SQL'],responsibilities:[],achievements:[],technicalClaims:[]},
+    questions:[{id:'architectureClaims',kind:'architectureClaims',prompt:'Explain the project architecture.'}]};
+  config.ai.apiKey='test-key';config.ai.model='test-model';
+  const spy=jest.spyOn(structuredAiModule,'structuredAI').mockImplementation(async(input:any)=>{
+    expect(input.context.entry.description).toContain('payment pipeline');
+    expect(input.context.resumeExcerpt).toContain('Candidate resume');
+    return {answers:[{id:'architectureClaims',draft:'I built a payment pipeline using Python and SQL.'}]} as any;
+  });
+  try {
+    const result=await a.post('/api/profile/onboarding/answer-drafts').send(requestBody);
+    expect(result.status).toBe(200);
+    expect(result.body.data.answers[0].draft).toContain('payment pipeline');
+    spy.mockRejectedValueOnce(new Error('provider unavailable'));
+    const failed=await a.post('/api/profile/onboarding/answer-drafts').send(requestBody);
+    expect(failed.status).toBe(503);
+    expect(failed.body.data?.answers).toBeUndefined();
+  } finally { spy.mockRestore();config.ai.apiKey=previousKey;config.ai.model=previousModel; }
 });
 test('review uses active resume and assigns unique IDs to newly added projects and experience', async()=>{
   const email='resume-review-active@example.test';
