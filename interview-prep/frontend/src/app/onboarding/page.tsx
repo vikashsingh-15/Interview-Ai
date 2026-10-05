@@ -26,6 +26,7 @@ export default function OnboardingPage() {
   const [date,setDate] = useState('');
   const [plan,setPlan] = useState<any[]>([]);
   const [skillDraft,setSkillDraft] = useState('');
+  const [generatingAnswers,setGeneratingAnswers] = useState(false);
   const skillInput = useRef<HTMLInputElement>(null);
   async function load() {
     const { data } = await api.get('/profile/onboarding');
@@ -55,6 +56,31 @@ export default function OnboardingPage() {
     setReviewed(false);
     setFacts((previous:any)=>({...previous,[kind]:previous[kind].map((item:any,i:number)=>i===index?{...item,...patch}:item)}));
   }
+  async function generateAllAnswers() {
+    if (!facts) return;
+    setGeneratingAnswers(true); setMessage('');
+    try {
+      const questions:any[] = [];
+      facts.experience.forEach((item:any,i:number) => ['responsibilities','achievements','technicalClaims'].forEach(field => questions.push({ id:`experience-${i}-${field}`, prompt:`For ${item.role || 'this work experience'} at ${item.company || 'this company'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
+      facts.projects.forEach((item:any,i:number) => ['description','responsibilities','architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features'].forEach(field => questions.push({ id:`project-${i}-${field}`, prompt:`For the project ${item.name || 'this project'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
+      if (!questions.length) { setMessage('Add or confirm a project or work experience before generating answers.'); return; }
+      const response = await api.post('/profile/onboarding/answer-drafts',{questions});
+      const answers = response.data.data.answers || [];
+      setFacts((previous:any) => {
+        const next = {...previous, experience:previous.experience.map((item:any)=>({...item})), projects:previous.projects.map((item:any)=>({...item}))};
+        for (const answer of answers) {
+          const match = String(answer.id).match(/^(experience|project)-(\d+)-(.+)$/); if (!match || !answer.draft) continue;
+          const collection = match[1] === 'experience' ? next.experience : next.projects;
+          const index = Number(match[2]); const field = match[3];
+          if (!collection[index] || (Array.isArray(collection[index][field]) && collection[index][field].length)) continue;
+          collection[index][field] = field === 'description' ? answer.draft : [answer.draft];
+        }
+        return next;
+      });
+      setReviewed(false); setMessage('AI drafts were added to empty answer fields. Review and edit every draft before saving.');
+    } catch (e:any) { setMessage(e.response?.data?.error?.message || 'Could not generate answer drafts.'); }
+    finally { setGeneratingAnswers(false); }
+  }
   async function upload(file:File) {
     await act(async()=>{
       const form = new FormData();form.append('file',file);
@@ -74,7 +100,7 @@ export default function OnboardingPage() {
       <p>Text-based PDF or DOCX. Uploading again creates a version; old versions are retained until you delete your resume.</p>
       <input aria-label="Upload resume" type="file" accept=".pdf,.docx" disabled={busy}
         onChange={e=>{const file=e.target.files?.[0];if(file)void upload(file);}} />
-      <p className="text-sm text-gray-600">Without configured AI, local parsing extracts known skills and contact links only. Add missing skills, projects and work experience below.</p>
+      <p className="text-sm text-gray-600">Resume facts are suggestions until you confirm them. After saving confirmed facts, you can generate editable answer drafts grounded in your projects and experience.</p>
     </section>
     {facts && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">2. Review extracted facts</h2>
       <label className="block">Current role<input className={inputStyle} value={facts.currentRole || ''}
@@ -126,6 +152,10 @@ export default function OnboardingPage() {
         setReviewed(true);setMessage('Review saved. Only confirmed entries will personalize questions.');
         if (!plan.length) setPlan([{title:'Professional practice',topic:response.data.data.skills.find((s:any)=>s.isConfirmed&&!s.isRemoved)?.name || response.data.data.currentRole || 'Professional experience',type:'technical',count:5}]);
       })}>Save reviewed facts</button>
+      <button className="rounded border border-blue-700 text-blue-700 px-4 py-2 disabled:opacity-50" disabled={busy || generatingAnswers || !reviewed} onClick={()=>void generateAllAnswers()}>
+        {generatingAnswers ? 'Generating answer drafts…' : 'Generate all empty answers with AI'}
+      </button>
+      <p className="text-xs text-gray-600">Generated answers are drafts only. Verify that every statement is true before saving them as reviewed facts.</p>
     </section>}
     {facts && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">3. Goals and daily plan</h2>
       <label className="block">Target role (optional; blank uses your reviewed current role)<input className={inputStyle} value={role} onChange={e=>setRole(e.target.value)} /></label>
