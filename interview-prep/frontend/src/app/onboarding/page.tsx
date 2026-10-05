@@ -64,7 +64,13 @@ export default function OnboardingPage() {
       facts.experience.forEach((item:any,i:number) => ['responsibilities','achievements','technicalClaims'].forEach(field => questions.push({ id:`experience-${i}-${field}`, prompt:`For ${item.role || 'this work experience'} at ${item.company || 'this company'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
       facts.projects.forEach((item:any,i:number) => ['description','responsibilities','architectureClaims','performanceClaims','securityClaims','metrics','technicalDecisions','features'].forEach(field => questions.push({ id:`project-${i}-${field}`, prompt:`For the project ${item.name || 'this project'}, draft the answer for: ${field.replace(/([A-Z])/g,' $1')}.`, kind:field })));
       if (!questions.length) { setMessage('Add or confirm a project or work experience before generating answers.'); return; }
-      const response = await api.post('/profile/onboarding/answer-drafts',{questions});
+      const confirmedFacts = {
+        currentRole: facts.currentRole || '',
+        skills: facts.skills.filter((item:any)=>item.isConfirmed && !item.isRemoved),
+        experience: facts.experience.filter((item:any)=>item.isConfirmed && !item.isRemoved),
+        projects: facts.projects.filter((item:any)=>item.isConfirmed && !item.isRemoved),
+      };
+      const response = await api.post('/profile/onboarding/answer-drafts',{questions,confirmedFacts});
       const answers = response.data.data.answers || [];
       setFacts((previous:any) => {
         const next = {...previous, experience:previous.experience.map((item:any)=>({...item})), projects:previous.projects.map((item:any)=>({...item}))};
@@ -77,7 +83,12 @@ export default function OnboardingPage() {
         }
         return next;
       });
-      setReviewed(false); setMessage('AI drafts were added to empty answer fields. Review and edit every draft before saving.');
+      const mode=response.data.data.mode;
+      setReviewed(false); setMessage(mode==='ai'
+        ? 'AI drafts were added to empty answer fields. Review and edit every draft before saving.'
+        : mode==='fallback'
+          ? 'AI was unavailable, so conservative drafts were added. Configure the AI provider for tailored answers.'
+          : 'No confirmed project or work-experience evidence was available for these answers.');
     } catch (e:any) { setMessage(e.response?.data?.error?.message || 'Could not generate answer drafts.'); }
     finally { setGeneratingAnswers(false); }
   }
