@@ -25,6 +25,9 @@ export interface IQuestionHistory {
 
   /** Resume profile active when this question was served (topic practice). */
   resumeProfileId?: mongoose.Types.ObjectId;
+  resumeId?: mongoose.Types.ObjectId;
+  resumeVersionId?: mongoose.Types.ObjectId;
+  resumeNameSnapshot?: string;
   /** True when the row came from topic-wise practice rather than a daily session. */
   isTopicPractice?: boolean;
 
@@ -141,6 +144,9 @@ const questionHistorySchema = new Schema<IQuestionHistory>(
 
     // Resume profile + origin tagging
     resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile', index: true },
+    resumeId: { type: Schema.Types.ObjectId, ref: 'Resume', index: true },
+    resumeVersionId: { type: Schema.Types.ObjectId, ref: 'ResumeVersion', index: true },
+    resumeNameSnapshot: String,
     isTopicPractice: { type: Boolean, default: false, index: true },
 
     // Session context

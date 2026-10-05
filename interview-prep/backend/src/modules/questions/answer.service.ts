@@ -3,6 +3,7 @@ import { structuredAI } from '../../common/services/structured-ai';
 import { hasAI } from '../../common/services/ai-provider';
 import { Question } from './question.model';
 import { NotFoundError } from '../../common/filters/error-filter';
+import { resolveStoredResumeContext } from '../resume/resume-context.service';
 
 // Short spoken-style interview answer (same shape as session answers).
 const interviewAnswerSchema = z.object({
@@ -128,6 +129,7 @@ export async function getOrCreateQuestionAnswer(input: AnswerQuestionInput): Pro
 
   if (!question) throw new NotFoundError('Question not found');
 
+  const storedResumeContext = await resolveStoredResumeContext(userId, question);
   const reference =
     question.interviewAnswer ||
     question.detailedAnswer ||
@@ -191,7 +193,7 @@ export async function getOrCreateQuestionAnswer(input: AnswerQuestionInput): Pro
       context: {
         question: question.question,
         reference,
-        storedWork: question.sourceContext,
+        storedWork: question.sourceContext || storedResumeContext?.profile,
         concepts: question.concepts,
         difficulty: question.difficulty,
         type: question.questionType,
@@ -210,7 +212,7 @@ export async function getOrCreateQuestionAnswer(input: AnswerQuestionInput): Pro
         difficulty: question.difficulty,
         type: question.questionType,
         shortAnswer: null,
-        storedWork: question.sourceContext,
+        storedWork: question.sourceContext || storedResumeContext?.profile,
       },
       system: detailedSystemPrompt,
     }),

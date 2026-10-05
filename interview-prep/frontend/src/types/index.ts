@@ -28,10 +28,27 @@ export interface UserPreferences {
 // Resume types
 export interface Resume {
   id: string;
+  name: string;
+  targetRole?: string;
+  isActive: boolean;
   currentVersionId: string;
   versions: string[];
   uploadDate: string;
   totalVersions: number;
+}
+
+export interface ResumeSummary {
+  id: string;
+  name: string;
+  targetRole?: string;
+  isActive: boolean;
+  currentVersionId?: string;
+  versionNumber: number;
+  createdAt: string;
+  updatedAt: string;
+  skills: string[];
+  projectsCount: number;
+  experienceCount: number;
 }
 
 export interface ResumeVersion {

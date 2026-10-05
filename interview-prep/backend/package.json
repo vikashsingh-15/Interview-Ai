@@ -16,6 +16,7 @@
     "seed:all": "npm run seed && npm run seed:coding",
     "migrate": "ts-node src/scripts/migrate.ts",
     "migrate:resume-storage": "ts-node src/scripts/migrate-resume-storage.ts",
+    "migrate:multi-resume": "ts-node src/scripts/migrate-multi-resume-context.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

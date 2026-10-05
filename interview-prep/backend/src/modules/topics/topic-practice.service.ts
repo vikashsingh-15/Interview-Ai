@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import logger from '../../config/logger';
 import { Question } from '../questions/question.model';
+import { resolveActiveResumeContext } from '../resume/resume-context.service';
 import { QuestionHistory } from '../questions/question-history.model';
 import { getOrCreateQuestionAnswer } from '../questions/answer.service';
 import { recordQuestionInDailyCalendar, recomputeTotals } from '../calendar/calendar.service';
@@ -56,10 +57,12 @@ function toClientQuestion(q: any) {
 /** The active resume profile for the user, or null when none exists. */
 export async function getActiveResumeProfileId(userId: string): Promise<mongoose.Types.ObjectId | null> {
   const ResumeProfile = mongoose.model('ResumeProfile');
-  const profile: any = await ResumeProfile.findOne({ userId: new mongoose.Types.ObjectId(userId) })
-    .sort({ updatedAt: -1 })
-    .select('_id')
-    .lean();
+  const Resume = mongoose.model('Resume');
+  const active: any = await Resume.findOne({ userId: new mongoose.Types.ObjectId(userId), isActive: true, isDeleted: false })
+    .select('currentVersionId').lean();
+  if (!active?.currentVersionId) return null;
+  const profile: any = await ResumeProfile.findOne({ userId: new mongoose.Types.ObjectId(userId), resumeVersionId: active.currentVersionId })
+    .select('_id').lean();
   return profile ? profile._id : null;
 }
 
@@ -488,6 +491,9 @@ async function persistTopicQuestion(input: {
   const normalizedHash = input.source
     ? questionHash(`${userId}:${input.source.kind}:${input.source.id}:${q.question}`)
     : questionHash(q.question);
+  const activeContext = input.source?.resumeProfileId
+    ? null
+    : await resolveActiveResumeContext(userId);
   try {
     return await Question.create({
       question: q.question,
@@ -515,6 +521,10 @@ async function persistTopicQuestion(input: {
       promptVersion: 'topic-practice-v1',
       generatedAt: new Date(),
       ownerUserId: new mongoose.Types.ObjectId(userId),
+      resumeId: activeContext?.resumeId,
+      resumeVersionId: activeContext?.resumeVersionId,
+      resumeProfileId: input.source?.resumeProfileId || activeContext?.profile?._id,
+      resumeNameSnapshot: activeContext?.resumeName,
       normalizedHash,
       tags: ['topic-practice', 'ai-generated'],
       expectedAnswerDepth: 'DEEP',
@@ -624,6 +634,12 @@ export async function startPracticeSet(params: {
   }
 
   const resumeProfileId = source?.resumeProfileId || await getActiveResumeProfileId(userId);
+  const activeProfile: any = resumeProfileId
+    ? await mongoose.model('ResumeProfile').findOne({ _id: resumeProfileId, userId }).select('resumeVersionId').lean()
+    : null;
+  const activeResume: any = activeProfile?.resumeVersionId
+    ? await mongoose.model('Resume').findOne({ userId, currentVersionId: activeProfile.resumeVersionId }).select('_id name').lean()
+    : null;
   const occurredAt = new Date();
   const items: any[] = [];
 
@@ -638,6 +654,9 @@ export async function startPracticeSet(params: {
           questionId: q._id,
           questionVersion: q.version || 1,
           resumeProfileId: resumeProfileId || undefined,
+          resumeId: activeResume?._id,
+          resumeVersionId: activeProfile?.resumeVersionId,
+          resumeNameSnapshot: activeResume?.name,
           isTopicPractice: !source,
           isCoding: !!q.isCoding,
           questionSnapshot: {
@@ -653,7 +672,7 @@ export async function startPracticeSet(params: {
             expectedAnswerDepth: q.expectedAnswerDepth || 'MODERATE',
             estimatedAnswerTimeSeconds: q.estimatedAnswerTimeSeconds,
             provenance: q.provenance,
-            practiceSource: q.practiceSource,
+          practiceSource: q.practiceSource,
           },
           status: 'NEW',
         });

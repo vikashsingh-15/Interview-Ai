@@ -87,7 +87,8 @@ export const resumeService = {
   // Upload resume
   async uploadResume(
     userId: string,
-    file: Express.Multer.File
+    file: Express.Multer.File,
+    options: { resumeId?: string; name?: string; targetRole?: string } = {}
   ): Promise<{ resumeVersion: any; resume: any }> {
     // Validate file
     this.validateFile(file);
@@ -96,9 +97,24 @@ export const resumeService = {
     const checksum = this.calculateChecksum(file.buffer);
 
     // Atomically allocate a version number; concurrent uploads cannot overwrite each other.
-    const resume = await Resume.findOneAndUpdate({ userId }, {
-      $inc:{totalVersions:1}, $set:{isDeleted:false}, $setOnInsert:{uploadDate:new Date()},
-    },{upsert:true,new:true,setDefaultsOnInsert:true});
+    let resume = options.resumeId
+      ? await Resume.findOne({ _id: options.resumeId, userId, isDeleted: false })
+      : await Resume.findOne({ userId, isActive: true, isDeleted: false });
+    if (options.resumeId && !resume) throw new NotFoundError('Resume not found');
+    if (!resume) {
+      const hasResume = await Resume.exists({ userId, isDeleted: false });
+      resume = await Resume.create({
+        userId,
+        name: options.name?.trim() || `Resume ${hasResume ? '' : '1'}`.trim(),
+        targetRole: options.targetRole?.trim(),
+        isActive: !hasResume,
+        uploadDate: new Date(),
+      });
+    } else if (!options.resumeId && options.name?.trim()) {
+      resume.name = options.name.trim();
+      if (options.targetRole !== undefined) resume.targetRole = options.targetRole.trim();
+    }
+    resume.totalVersions += 1;
     const versionNumber = resume.totalVersions;
 
     // Save file
@@ -126,8 +142,9 @@ export const resumeService = {
       throw error;
     }
 
-    await Resume.updateOne({_id:resume._id},{$push:{versions:resumeVersion._id}});
-    await Resume.updateOne({_id:resume._id,totalVersions:versionNumber},{$set:{currentVersionId:resumeVersion._id}});
+    resume.versions.push(resumeVersion._id);
+    resume.currentVersionId = resumeVersion._id;
+    await resume.save();
     await InterviewProfile.updateOne({userId},{$set:{onboardingCompleted:false}});
 
     logger.info('Resume uploaded', {
@@ -281,7 +298,7 @@ export const resumeService = {
 
   // Get user's resume
   async getResume(userId: string): Promise<any> {
-    const resume = await Resume.findOne({ userId, isDeleted: false })
+    const resume = await Resume.findOne({ userId, isDeleted: false, isActive: true })
       .populate({
         path: 'currentVersionId',
         model: 'ResumeVersion',
@@ -301,6 +318,9 @@ export const resumeService = {
     return {
       resume: {
         id: resume._id,
+        name: resume.name,
+        targetRole: resume.targetRole,
+        isActive: resume.isActive,
         currentVersionId: resume.currentVersionId?._id,
         versions: resume.versions,
         uploadDate: resume.uploadDate,
@@ -318,12 +338,56 @@ export const resumeService = {
 
     // Retain previous versions until explicit deletion.
     // Upload new resume (reuses uploadResume logic)
-    return this.uploadResume(userId, file);
+    const active = await Resume.findOne({ userId, isActive: true, isDeleted: false });
+    return this.uploadResume(userId, file, { resumeId: active?._id.toString() });
+  },
+
+  async listResumes(userId: string): Promise<any[]> {
+    const resumes = await Resume.find({ userId, isDeleted: false })
+      .sort({ isActive: -1, updatedAt: -1 }).lean();
+    const versionIds = resumes.map(r => r.currentVersionId).filter(Boolean);
+    const profiles = await ResumeProfile.find({ userId, resumeVersionId: { $in: versionIds } })
+      .select('resumeVersionId skills projects experience versionNumber parseStatus').lean();
+    const byVersion = new Map(profiles.map(p => [String(p.resumeVersionId), p]));
+    return resumes.map(r => {
+      const profile: any = byVersion.get(String(r.currentVersionId));
+      return {
+        id: r._id, name: r.name, targetRole: r.targetRole, isActive: r.isActive,
+        currentVersionId: r.currentVersionId, versionNumber: r.totalVersions,
+        createdAt: r.createdAt, updatedAt: r.updatedAt,
+        skills: (profile?.skills || []).filter((s: any) => !s.isRemoved).map((s: any) => s.name),
+        projectsCount: (profile?.projects || []).filter((p: any) => !p.isRemoved).length,
+        experienceCount: (profile?.experience || []).filter((e: any) => !e.isRemoved).length,
+      };
+    });
+  },
+
+  async activateResume(userId: string, resumeId: string): Promise<any> {
+    const resume = await Resume.findOne({ _id: resumeId, userId, isDeleted: false });
+    if (!resume) throw new NotFoundError('Resume not found');
+    // The partial unique index is the final race-safe guard. The normal path is
+    // deliberately small so it also works on MongoDB deployments without transactions.
+    await Resume.updateMany({ userId, isDeleted: false, _id: { $ne: resume._id } }, { $set: { isActive: false } });
+    resume.isActive = true;
+    await resume.save();
+    return resume.toObject();
+  },
+
+  async renameResume(userId: string, resumeId: string, name: string, targetRole?: string): Promise<any> {
+    const cleanName = name.trim();
+    if (!cleanName) throw new BadRequestError('Resume name is required');
+    const resume = await Resume.findOneAndUpdate(
+      { _id: resumeId, userId, isDeleted: false },
+      { $set: { name: cleanName, ...(targetRole === undefined ? {} : { targetRole: targetRole.trim() }) } },
+      { new: true },
+    );
+    if (!resume) throw new NotFoundError('Resume not found');
+    return resume;
   },
 
   // Delete resume
-  async deleteResume(userId: string): Promise<void> {
-    const resume = await Resume.findOne({ userId, isDeleted: false });
+  async deleteResume(userId: string, resumeId?: string): Promise<void> {
+    const resume = await Resume.findOne({ userId, isDeleted: false, ...(resumeId ? { _id: resumeId } : { isActive: true }) });
 
     if (!resume) {
       throw new NotFoundError('Resume not found');
@@ -342,8 +406,13 @@ export const resumeService = {
     resume.deletedAt = new Date();
     await resume.save();
 
-    // Also delete associated resume profiles
-    await ResumeProfile.deleteMany({ userId: new mongoose.Types.ObjectId(userId) });
+    if (resume.isActive) {
+      const replacement = await Resume.findOne({ userId, isDeleted: false, _id: { $ne: resume._id } }).sort({ updatedAt: -1 });
+      if (replacement) {
+        replacement.isActive = true;
+        await replacement.save();
+      }
+    }
 
     logger.info('Resume deleted', { userId });
   },

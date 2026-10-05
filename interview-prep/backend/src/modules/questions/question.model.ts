@@ -74,6 +74,9 @@ export interface IQuestion {
   // tagged with the resumeProfileId that produced it. Null means the question
   // came from the shared topic bank, not a specific resume.
   resumeProfileId?: mongoose.Types.ObjectId;  // Which resume profile generated this question (if any)
+  resumeId?: mongoose.Types.ObjectId;
+  resumeVersionId?: mongoose.Types.ObjectId;
+  resumeNameSnapshot?: string;
   question: string;
   topic: string;
   subtopic: string;
@@ -219,6 +222,9 @@ const questionSchema = new Schema<IQuestion>(
     ownerUserId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     // Resume profile that produced (or was active when) this question was served.
     resumeProfileId: { type: Schema.Types.ObjectId, ref: 'ResumeProfile', index: true },
+    resumeId: { type: Schema.Types.ObjectId, ref: 'Resume', index: true },
+    resumeVersionId: { type: Schema.Types.ObjectId, ref: 'ResumeVersion', index: true },
+    resumeNameSnapshot: String,
     // Core question
     question: {
       type: String,

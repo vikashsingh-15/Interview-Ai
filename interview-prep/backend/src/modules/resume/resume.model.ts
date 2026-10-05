@@ -26,6 +26,9 @@ export interface IResumeVersionDocument extends IResumeVersion, Document {}
 export interface IResume {
   _id: mongoose.Types.ObjectId;
   userId: mongoose.Types.ObjectId;
+  name: string;
+  targetRole?: string;
+  isActive: boolean;
   currentVersionId?: mongoose.Types.ObjectId;
   versions: mongoose.Types.ObjectId[];
   uploadDate: Date;
@@ -109,6 +112,9 @@ const resumeSchema = new Schema<IResume>(
       required: true,
       index: true,
     },
+    name: { type: String, required: true, trim: true, maxlength: 120, default: 'Resume' },
+    targetRole: { type: String, trim: true, maxlength: 160 },
+    isActive: { type: Boolean, default: false, index: true },
     currentVersionId: {
       type: Schema.Types.ObjectId,
       ref: 'ResumeVersion',
@@ -138,6 +144,11 @@ const resumeSchema = new Schema<IResume>(
 );
 
 resumeSchema.index({ userId: 1, isDeleted: 1 });
+// MongoDB enforces the invariant for concurrent activation attempts.
+resumeSchema.index({ userId: 1, isActive: 1 }, {
+  unique: true,
+  partialFilterExpression: { isActive: true, isDeleted: false },
+});
 
 // Methods
 resumeSchema.methods.addVersion = async function(version: IResumeVersionDocument) {

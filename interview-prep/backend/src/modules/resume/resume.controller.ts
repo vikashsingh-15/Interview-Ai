@@ -57,7 +57,11 @@ router.post(
       throw new Error('Not authenticated');
     }
 
-    const result = await resumeService.uploadResume(req.user.id, req.file);
+    const result = await resumeService.uploadResume(req.user.id, req.file, {
+      resumeId: typeof req.body.resumeId === 'string' ? req.body.resumeId : undefined,
+      name: typeof req.body.name === 'string' ? req.body.name : undefined,
+      targetRole: typeof req.body.targetRole === 'string' ? req.body.targetRole : undefined,
+    });
 
     res.status(201).json({
       success: true,
@@ -78,6 +82,25 @@ router.post(
     });
   })
 );
+
+router.get('/list', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  res.json({ success: true, data: await resumeService.listResumes(req.user!.id) });
+}));
+
+router.get('/active', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const resumes = await resumeService.listResumes(req.user!.id);
+  res.json({ success: true, data: resumes.find(r => r.isActive) || null });
+}));
+
+router.post('/:id/activate', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const resume = await resumeService.activateResume(req.user!.id, req.params.id);
+  res.json({ success: true, data: resume });
+}));
+
+router.patch('/:id', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const body = z.object({ name: z.string().min(1).max(120), targetRole: z.string().max(160).optional() }).parse(req.body);
+  res.json({ success: true, data: await resumeService.renameResume(req.user!.id, req.params.id, body.name, body.targetRole) });
+}));
 
 // Parse resume
 router.post(
@@ -126,7 +149,7 @@ router.post(
 );
 
 // Get resume
-router.get(
+  router.get(
   '/',
   authenticate,
   asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -197,7 +220,7 @@ router.delete(
       throw new Error('Not authenticated');
     }
 
-    await resumeService.deleteResume(req.user.id);
+    await resumeService.deleteResume(req.user.id, typeof req.query.resumeId === 'string' ? req.query.resumeId : undefined);
 
     res.json({
       success: true,
@@ -215,7 +238,7 @@ router.get(
       throw new Error('Not authenticated');
     }
 
-    const resume = await Resume.findOne({ userId: req.user.id, isDeleted: false }).lean();
+    const resume = await Resume.findOne({ userId: req.user.id, isDeleted: false, isActive: true }).lean();
 
     if (!resume || !resume.currentVersionId) {
       throw new NotFoundError('No resume profile found');
@@ -264,7 +287,7 @@ router.put(
       throw new Error('Not authenticated');
     }
 
-    const resume = await Resume.findOne({ userId: req.user.id, isDeleted: false }).lean();
+    const resume = await Resume.findOne({ userId: req.user.id, isDeleted: false, isActive: true }).lean();
 
     if (!resume || !resume.currentVersionId) {
       throw new NotFoundError('No resume profile found');
