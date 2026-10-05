@@ -142,31 +142,67 @@ export async function extractResumeText(buffer: Buffer, mimeType: string): Promi
   return text;
 }
 
-// Conservative local extraction: matches text actually present, never sample employers/projects.
-function localExtraction(text: string) {
-  const known: Record<string, typeof skillCategories[number]> = {
-    Java: 'programming_language', JavaScript: 'programming_language', TypeScript: 'programming_language',
-    Python: 'programming_language', Go: 'programming_language', SQL: 'programming_language',
-    Rust: 'programming_language', Ruby: 'programming_language', C: 'programming_language',
-    React: 'framework', Angular: 'framework', 'Spring Boot': 'framework', 'Node.js': 'framework',
-    Express: 'framework', Django: 'framework', MongoDB: 'database', PostgreSQL: 'database',
-    MySQL: 'database', Redis: 'database', AWS: 'cloud', Azure: 'cloud', Docker: 'devops',
-    Kubernetes: 'devops', Git: 'devops', Kafka: 'messaging', GraphQL: 'architecture',
+// Generic local extraction: harvests explicit entries from skill/tool sections and
+// stack lines instead of maintaining a technology allow-list. This intentionally
+// does not infer skills from job titles or prose such as "built a pipeline".
+export function localExtraction(text: string) {
+  const lines = text.split(/\r?\n/).map(line => line.replace(/[•▪◦]/g, '').trim()).filter(Boolean);
+  const sectionPattern = /^(technical\s+skills?|skills?|technical\s+proficienc(?:y|ies)|tools(?:\s+and\s+technologies)?|technologies|technology\s+stack|tech\s+stack)$/i;
+  const headingPattern = /^(summary|objective|profile|work\s+experience|experience|employment|education|projects?|certifications?|achievements?|references?|languages?)$/i;
+  const candidates: string[] = [];
+  let inSkillsSection = false;
+  for (const line of lines) {
+    const heading = line.replace(/[:：]$/, '').trim();
+    if (sectionPattern.test(heading)) { inSkillsSection = true; continue; }
+    if (inSkillsSection && headingPattern.test(heading)) { inSkillsSection = false; continue; }
+    if (inSkillsSection) candidates.push(line);
+    if (/^stack\s*:/i.test(line)) candidates.push(line.replace(/^stack\s*:/i, ''));
+  }
+  // Also support compact prose commonly used in short resumes/tests, but only
+  // after explicit technology cues; ordinary descriptive sentences are ignored.
+  for (const match of text.matchAll(/\b(?:knows?|熟悉|using|uses?|with|experience\s+in|proficien(?:t|cy)\s+in)\s+([^.!?\n]+)/gi)) {
+    candidates.push(match[1]);
+  }
+
+  const entries = candidates.flatMap(line => {
+    const withoutLabel = line.includes(':') ? line.slice(line.indexOf(':') + 1) : line;
+    return withoutLabel.split(/\s*(?:\band\b|[|·•;,])\s*/i).map(value => value.trim())
+      .map(value => value.replace(/\s+(?:experience|expertise|skills?)$/i, '').trim());
+  }).filter(value => value && !/^(languages?|tools?|concepts?|skills?|frameworks?|databases?|cloud|devops|bi|orchestration|big\s+data|streaming)$/i.test(value));
+
+  const seen = new Set<string>();
+  const skills = entries.filter(name => {
+    const key = name.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || key.length < 2 || key.length > 100 || seen.has(key)) return false;
+    seen.add(key); return true;
+  }).map(name => ({ name, category: 'other' as const, confidence: 0.5 }));
+  const dateRange = /(?:^|\s)([A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[/.\-]\d{4}|\d{4})\s*(?:[-–—]|to)\s*(Present|Current|Now|[A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[/.\-]\d{4}|\d{4})/i;
+  const sectionLines = (names: RegExp, stop: RegExp) => {
+    const start = lines.findIndex(line => names.test(line.replace(/[:：]$/, '').trim()));
+    if (start < 0) return [];
+    const result: string[] = [];
+    for (const line of lines.slice(start + 1)) { if (stop.test(line.replace(/[:：]$/, '').trim())) break; result.push(line); }
+    return result;
   };
-  const lower = text.toLowerCase();
-  const skills = Object.entries(known).filter(([name]) => {
-    let offset = lower.indexOf(name.toLowerCase());
-    while (offset >= 0) {
-      const before = lower[offset - 1] || ' ', after = lower[offset + name.length] || ' ';
-      if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true;
-      offset = lower.indexOf(name.toLowerCase(), offset + 1);
-    }
-    return false;
-  }).map(([name, category]) => ({ name, category, confidence: 0.5 }));
+  const experience: Array<z.infer<typeof experienceEntrySchema>> = [];
+  for (const line of sectionLines(/^(work\s+experience|experience|employment)$/i, /^(projects?|education|technical\s+skills?|skills?|certifications?)$/i)) {
+    const match = line.match(dateRange); if (!match) continue;
+    const parts = line.slice(0, match.index).replace(/[|•]+$/, '').trim().split(/\s+[—–-]\s+/).map(part => part.trim()).filter(Boolean);
+    if (parts.length < 2) continue;
+    experience.push({ company: parts[0], role: parts[1], startDate: isoDate.parse(match[1]), endDate: isoDate.parse(match[2]), currentRole: /present|current|now/i.test(match[2]), responsibilities: [], technologies: [], achievements: [], projectReferences: [], technicalClaims: [] });
+  }
+  const projects: Array<z.infer<typeof projectEntrySchema>> = [];
+  const projectLines = sectionLines(/^projects?$/i, /^(technical\s+skills?|skills?|education|certifications?)$/i);
+  for (let i = 1; i < projectLines.length; i += 1) {
+    const stack = projectLines[i].match(/^stack\s*:\s*(.+)$/i); if (!stack) continue;
+    const name = projectLines[i - 1].replace(/\s+(?:•|â€¢)\s+.*$/, '').replace(/\s{2,}[^\s].*$/, '').trim(); if (!name) continue;
+    const technologies = stack[1].split(/\s*[·|;,]\s*/).map(value => value.trim()).filter(Boolean);
+    projects.push({ name, description: `Explicit resume project. Stack: ${stack[1]}`, technologies, responsibilities: [], architectureClaims: [], features: [], performanceClaims: [], metrics: [], securityClaims: [], technicalDecisions: [] });
+  }
   return extractedResumeSchema.parse({
     fullName: '', email: text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '',
     linkedinUrl: text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+/i)?.[0] || '',
-    githubUrl: text.match(/https?:\/\/(?:www\.)?github\.com\/[^\s]+/i)?.[0] || '', skills,
+    githubUrl: text.match(/https?:\/\/(?:www\.)?github\.com\/[^\s]+/i)?.[0] || '', skills, experience, projects,
   });
 }
 

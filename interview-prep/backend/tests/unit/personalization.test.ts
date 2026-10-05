@@ -1,6 +1,6 @@
 import { normalizeQuestion, questionHash, nearDuplicate, cosine, generatedBatchSchema, matchesQuestionTopic,
   matchesSystemDesignTopic, hasValidProjectGrounding, buildProjectFallbackQuestions } from '../../src/modules/questions/personalized-generator';
-import { parseResumeBuffer, extractResumeText, extractedResumeSchema } from '../../src/modules/resume/resume-parser';
+import { parseResumeBuffer, extractResumeText, extractedResumeSchema, localExtraction } from '../../src/modules/resume/resume-parser';
 import * as structuredAiModule from '../../src/common/services/structured-ai';
 import config from '../../src/config';
 import { docxResume, pdfResume } from '../helpers/resume-fixtures';
@@ -24,6 +24,36 @@ describe('resume extraction and question identity',()=>{
   test('PDF parsing reads actual text',async()=>{
     const text=await extractResumeText(pdfResume('Candidate resume with Python React and PostgreSQL experience.'),'application/pdf');
     expect(text).toContain('PostgreSQL');
+  });
+  test('generic fallback discovers explicit skills from technical-skills and stack sections',()=>{
+    const result=localExtraction(`
+      SUMMARY
+      Data engineer building lakehouse pipelines.
+      PROJECTS
+      Stack: Azure Databricks · PySpark · Delta Lake · Unity Catalog · Kafka
+      TECHNICAL SKILLS
+      Languages: Python, PySpark, SQL
+      Azure & Databricks: Azure Databricks, ADLS Gen2, Azure Data Factory
+      Orchestration: Apache Airflow
+      BI & Tools: Tableau, Git
+      EDUCATION
+      B.Tech
+    `);
+    expect(result.skills.map(s=>s.name)).toEqual(expect.arrayContaining([
+      'Azure Databricks','PySpark','Delta Lake','Unity Catalog','Kafka','Python','SQL',
+      'ADLS Gen2','Azure Data Factory','Apache Airflow','Tableau','Git',
+    ]));
+    expect(result.skills.map(s=>s.name)).toEqual(expect.arrayContaining(['Azure Databricks']));
+    expect(result.skills.filter(s=>s.name.toLowerCase()==='azure databricks')).toHaveLength(1);
+    const facts=localExtraction(`WORK EXPERIENCE
+Jio Platforms Limited — Data Engineer Dec 2023 – Present
+PROJECTS
+Procurement & Inventory Analytics on Azure Databricks • Jio Telco
+Stack: Azure Databricks · PySpark · Delta Lake
+EDUCATION
+B.Tech`);
+    expect(facts.experience[0]).toMatchObject({company:'Jio Platforms Limited',role:'Data Engineer',currentRole:true});
+    expect(facts.projects[0]).toMatchObject({name:'Procurement & Inventory Analytics on Azure Databricks',technologies:['Azure Databricks','PySpark','Delta Lake']});
   });
   test('invalid files and unreadable content are rejected',async()=>{
     await expect(extractResumeText(Buffer.from('not a PDF'),'application/pdf')).rejects.toThrow('Invalid PDF');
