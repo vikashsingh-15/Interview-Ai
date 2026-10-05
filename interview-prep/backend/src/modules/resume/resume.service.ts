@@ -115,7 +115,12 @@ export const resumeService = {
       if (options.targetRole !== undefined) resume.targetRole = options.targetRole.trim();
     }
     resume.totalVersions += 1;
-    const versionNumber = resume.totalVersions;
+    // Existing deployments have a unique (userId, versionNumber) index from
+    // the original single-resume model. Allocate a user-wide number until the
+    // additive index migration is run, preventing second-resume uploads from
+    // failing with E11000 while preserving each resume's local totalVersions.
+    const latestVersion: any = await ResumeVersion.findOne({ userId }).sort({ versionNumber: -1 }).select('versionNumber').lean();
+    const versionNumber = Math.max(resume.totalVersions, Number(latestVersion?.versionNumber || 0) + 1);
 
     // Save file
     const { storagePath, storageKey, originalFilename, mimeType, fileSize } = await this.saveFile(file, userId);
