@@ -69,9 +69,11 @@ router.post('/onboarding/answer-drafts', asyncHandler(async (req: AuthenticatedR
   if (!facts) throw new BadRequestError('Upload and parse a resume before generating answer drafts');
   const storedConfirmedFacts = {
     currentRole: facts.currentRole,
-    skills: (facts.skills || []).filter((s: any) => s.isConfirmed && !s.isRemoved).map((s: any) => ({ name: s.name, category: s.category })),
-    experience: (facts.experience || []).filter((e: any) => e.isConfirmed && !e.isRemoved),
-    projects: (facts.projects || []).filter((p: any) => p.isConfirmed && !p.isRemoved),
+    // Draft generation may use extracted resume facts before approval. The
+    // output remains an editable draft and never changes confirmation state.
+    skills: (facts.skills || []).filter((s: any) => !s.isRemoved).map((s: any) => ({ name: s.name, category: s.category })),
+    experience: (facts.experience || []).filter((e: any) => !e.isRemoved),
+    projects: (facts.projects || []).filter((p: any) => !p.isRemoved),
   };
   const confirmedFacts = data.confirmedFacts || storedConfirmedFacts;
   const hasEvidence = confirmedFacts.experience.length > 0 || confirmedFacts.projects.length > 0 || confirmedFacts.skills.length > 0;

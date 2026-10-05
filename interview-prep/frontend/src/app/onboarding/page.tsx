@@ -66,9 +66,11 @@ export default function OnboardingPage() {
       if (!questions.length) { setMessage('Add or confirm a project or work experience before generating answers.'); return; }
       const confirmedFacts = {
         currentRole: facts.currentRole || '',
-        skills: facts.skills.filter((item:any)=>item.isConfirmed && !item.isRemoved),
-        experience: facts.experience.filter((item:any)=>item.isConfirmed && !item.isRemoved),
-        projects: facts.projects.filter((item:any)=>item.isConfirmed && !item.isRemoved),
+        // These are resume-extracted grounding facts, not confirmation state.
+        // The generated result is still only a draft until the user reviews it.
+        skills: facts.skills.filter((item:any)=>!item.isRemoved),
+        experience: facts.experience.filter((item:any)=>!item.isRemoved),
+        projects: facts.projects.filter((item:any)=>!item.isRemoved),
       };
       const response = await api.post('/profile/onboarding/answer-drafts',{questions,confirmedFacts});
       const answers = response.data.data.answers || [];
@@ -78,7 +80,10 @@ export default function OnboardingPage() {
           const match = String(answer.id).match(/^(experience|project)-(\d+)-(.+)$/); if (!match || !answer.draft) continue;
           const collection = match[1] === 'experience' ? next.experience : next.projects;
           const index = Number(match[2]); const field = match[3];
-          if (!collection[index] || (Array.isArray(collection[index][field]) && collection[index][field].length)) continue;
+          const oldValue=collection[index]?.[field];
+          const oldFallback=typeof oldValue==='string' && oldValue.startsWith('No confirmed resume evidence is available');
+          const oldFallbackArray=Array.isArray(oldValue) && oldValue.length===1 && String(oldValue[0]).startsWith('No confirmed resume evidence is available');
+          if (!collection[index] || ((Array.isArray(oldValue) && oldValue.length || typeof oldValue==='string' && oldValue.trim()) && !oldFallback && !oldFallbackArray)) continue;
           collection[index][field] = field === 'description' ? answer.draft : [answer.draft];
         }
         return next;
