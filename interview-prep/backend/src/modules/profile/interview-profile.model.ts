@@ -261,6 +261,7 @@ const interviewProfileSchema = new Schema<IInterviewProfile>(
 // Indexes (userId is no longer unique: a user can have multiple interview profiles,
 // one per resume profile)
 interviewProfileSchema.index({ userId: 1, onboardingCompleted: 1 });
+interviewProfileSchema.index({ userId: 1, resumeProfileId: 1 }, { unique: true });
 
 // Static methods
 interviewProfileSchema.statics.findByUserId = function(userId: mongoose.Types.ObjectId) {

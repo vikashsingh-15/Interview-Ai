@@ -536,10 +536,11 @@ export const resumeService = {
         }
       }
     }
-    if (!profile) profile = await InterviewProfile.create({
-      userId: ownerId, resumeProfileId, experienceLevel: 'other', targetRole: '', targetCompanies: [],
-      onboardingCompleted: false,
-    });
+    if (!profile) profile = await InterviewProfile.findOneAndUpdate(
+      { userId: ownerId, resumeProfileId },
+      { $setOnInsert: { experienceLevel: 'other', targetRole: '', targetCompanies: [], onboardingCompleted: false } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).orFail();
     return profile;
   },
 

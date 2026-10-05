@@ -14,6 +14,8 @@ import request from 'supertest';
 import { app } from '../../src/index';
 import User from '../../src/modules/auth/user.model';
 import { createSession } from '../../src/common/middleware/auth';
+import InterviewProfile from '../../src/modules/profile/interview-profile.model';
+import { ensureInterviewProfileIndexes } from '../../src/modules/resume/resume-indexes';
 
 jest.setTimeout(120000);
 let db:MongoMemoryServer;
@@ -22,6 +24,21 @@ afterAll(async()=>{
   await mongoose.disconnect();
   await expect(resumeStorage.get('owner/disconnected.pdf')).rejects.toThrow('connected MongoDB');
   if(db)await db.stop();
+});
+test('legacy interview profile constraint permits multiple resumes after migration',async()=>{
+  await InterviewProfile.init();
+  // All records here belong to this suite's isolated MongoMemoryServer.
+  await InterviewProfile.deleteMany({});
+  await InterviewProfile.collection.dropIndex('userId_1');
+  await InterviewProfile.collection.createIndex({userId:1},{unique:true});
+  const userId=new mongoose.Types.ObjectId();
+  const first=await InterviewProfile.create({userId,resumeProfileId:new mongoose.Types.ObjectId()});
+  await ensureInterviewProfileIndexes();
+  const second=await InterviewProfile.create({userId,resumeProfileId:new mongoose.Types.ObjectId()});
+  expect(String(first._id)).not.toBe(String(second._id));
+  await expect(InterviewProfile.create({userId,resumeProfileId:first.resumeProfileId})).rejects.toMatchObject({code:11000});
+  await ensureInterviewProfileIndexes();
+  expect(await InterviewProfile.countDocuments({userId})).toBe(2);
 });
 test('PDF and DOCX bytes and MIME metadata live in MongoDB, not disk',async()=>{
   for(const [key,bytes,mime] of [
