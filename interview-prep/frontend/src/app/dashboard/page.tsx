@@ -23,6 +23,8 @@ export default function DashboardPage() {
   const [regenerating, setRegenerating] = useState(false);
   const [regenNote, setRegenNote] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [dashboardPanels, setDashboardPanels] = useState({ today: true, tracker: true, planner: false });
+  const togglePanel = (panel: keyof typeof dashboardPanels) => setDashboardPanels((current) => ({ ...current, [panel]: !current[panel] }));
 
   const regenerateToday = async () => {
     if (regenerating) return;
@@ -81,13 +83,13 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-brand-background">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-brand-background">
       {/* Header */}
       <div className="bg-white border-b border-brand-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-brand-primary">
+                <h1 className="break-words text-3xl font-bold text-brand-primary">
                 Welcome back, {user?.name}!
               </h1>
               <p className="mt-1 text-brand-textSecondary">
@@ -97,7 +99,7 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
               <Button
                 variant="secondary"
                 onClick={regenerateToday}
@@ -124,7 +126,7 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <p className="mb-6"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link></p>
         {/* Stats Grid */}
-        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
+        <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
@@ -218,6 +220,13 @@ export default function DashboardPage() {
           </Card>
         </div>
 
+        <div className="mb-4 overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm">
+          <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left sm:px-6" aria-expanded={dashboardPanels.today} onClick={() => togglePanel('today')}>
+            <span><span className="block text-lg font-semibold text-brand-primary">Today</span><span className="block text-sm text-brand-textSecondary">Your session progress and question sections</span></span>
+            <span className="shrink-0 text-xl text-brand-textSecondary" aria-hidden="true">{dashboardPanels.today ? '−' : '+'}</span>
+          </button>
+        </div>
+        <div hidden={!dashboardPanels.today} className="min-w-0">
         {/* Session Overview */}
         {session && (
           <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
@@ -377,8 +386,23 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <TrackerSection />
-        <PlannerSection />
+        </div>
+
+        <div className="mb-4 overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm">
+          <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left sm:px-6" aria-expanded={dashboardPanels.tracker} onClick={() => togglePanel('tracker')}>
+            <span><span className="block text-lg font-semibold text-brand-primary">Daily tracker</span><span className="block text-sm text-brand-textSecondary">Track your custom daily targets</span></span>
+            <span className="shrink-0 text-xl text-brand-textSecondary" aria-hidden="true">{dashboardPanels.tracker ? '−' : '+'}</span>
+          </button>
+        </div>
+        <div hidden={!dashboardPanels.tracker} className="min-w-0"><TrackerSection /></div>
+
+        <div className="mb-4 overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm">
+          <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left sm:px-6" aria-expanded={dashboardPanels.planner} onClick={() => togglePanel('planner')}>
+            <span><span className="block text-lg font-semibold text-brand-primary">Monthly planner</span><span className="block text-sm text-brand-textSecondary">Review and manage weekly goals</span></span>
+            <span className="shrink-0 text-xl text-brand-textSecondary" aria-hidden="true">{dashboardPanels.planner ? '−' : '+'}</span>
+          </button>
+        </div>
+        <div hidden={!dashboardPanels.planner} className="min-w-0"><PlannerSection /></div>
 
         {/* Session Sections */}
         {(session?.sections?.length ?? 0) > 0 && (

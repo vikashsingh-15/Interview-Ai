@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import api, { ApiResponse } from '@/lib/api';
 import { UserPreferences } from '@/types';
+import { ResumeManager } from '@/components/resume/ResumeManager';
 
 const DIFFICULTY_OPTIONS: Array<{
   value: 'easy' | 'medium' | 'hard' | 'extra_hard' | 'mixed';
@@ -204,6 +205,7 @@ export default function SettingsPage() {
         <p className="mt-2 text-brand-textSecondary">
           Choose how many questions you get each day and how hard they should be.
         </p>
+        <div className="mt-8 border-t border-brand-border pt-8"><ResumeManager /></div>
 
         {message && (
           <Card className="mt-6 border-emerald-200 bg-emerald-50">

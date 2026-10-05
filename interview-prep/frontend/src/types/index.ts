@@ -49,6 +49,8 @@ export interface ResumeSummary {
   skills: string[];
   projectsCount: number;
   experienceCount: number;
+  experienceSummary: Array<{ company: string; role: string; summary: string[] }>;
+  projectSummary: Array<{ name: string; description: string; technologies: string[] }>;
 }
 
 export interface ResumeVersion {

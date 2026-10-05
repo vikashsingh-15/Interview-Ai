@@ -6,7 +6,7 @@ interface ProgressProps {
   max?: number
   size?: "sm" | "md" | "lg"
   showLabel?: boolean
-  variant?: "default" | "success" | "warning" | "error"
+  variant?: "default" | "success" | "warning" | "error" | "intermediate"
   className?: string
 }
 
@@ -25,6 +25,7 @@ const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
       success: "bg-emerald-500",
       warning: "bg-amber-500",
       error: "bg-red-500",
+      intermediate: "bg-orange-500",
     }
 
     return (

@@ -356,6 +356,8 @@ export const resumeService = {
         currentVersionId: r.currentVersionId, versionNumber: r.totalVersions,
         createdAt: r.createdAt, updatedAt: r.updatedAt,
         skills: (profile?.skills || []).filter((s: any) => !s.isRemoved).map((s: any) => s.name),
+        experienceSummary: (profile?.experience || []).filter((e: any) => !e.isRemoved).slice(0, 3).map((e: any) => ({ company: e.company, role: e.role, summary: (e.responsibilities || []).slice(0, 2) })),
+        projectSummary: (profile?.projects || []).filter((p: any) => !p.isRemoved).slice(0, 3).map((p: any) => ({ name: p.name, description: p.description, technologies: (p.technologies || []).slice(0, 5) })),
         projectsCount: (profile?.projects || []).filter((p: any) => !p.isRemoved).length,
         experienceCount: (profile?.experience || []).filter((e: any) => !e.isRemoved).length,
       };

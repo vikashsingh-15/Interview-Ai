@@ -229,6 +229,11 @@ router.delete(
   })
 );
 
+router.delete('/:id', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await resumeService.deleteResume(req.user!.id, req.params.id);
+  res.json({ success: true, message: 'Resume deleted successfully. Historical interview activity was preserved.' });
+}));
+
 // Get resume profile
 router.get(
   '/profile',

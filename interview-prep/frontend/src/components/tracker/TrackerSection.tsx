@@ -114,24 +114,26 @@ export function TrackerSection() {
         <Link className="text-sm text-brand-secondary hover:underline" href="/history?tab=tracker">Tracker history</Link>
       </CardHeader>
       <CardContent>
-        <Progress value={data.analytics.completed} max={Math.max(data.analytics.total, 1)} />
+        <Progress value={data.analytics.completed} max={Math.max(data.analytics.total, 1)} variant={data.analytics.completionPercent >= 100 ? 'success' : data.analytics.completionPercent >= 60 ? 'warning' : data.analytics.completionPercent > 0 ? 'intermediate' : 'error'} showLabel />
         {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
         <div className="mt-4 divide-y divide-brand-border">
           {data.tasks.map((task) => {
             const entry = entryByTask.get(task._id);
             const actual = Number(drafts[task._id] ?? entry?.actual ?? 0);
             const suggestion = task.systemKey === 'interview-practice' ? data.suggestedInterviewQuestions : undefined;
-            return <div key={task._id} className="py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2"><span className="font-medium text-brand-primary">{task.name}</span><Badge variant="neutral">{task.frequency}</Badge><span className="text-xs text-brand-textSecondary">Target {task.targetValue} {task.unit}</span></div>
-                <div className="flex items-center gap-2">
+            const percent = task.targetValue > 0 ? Math.min(100, Math.round((actual / task.targetValue) * 100)) : 0;
+            const progressVariant = percent >= 100 ? 'success' : percent >= 60 ? 'warning' : percent > 0 ? 'intermediate' : 'error';
+            return <div key={task._id} className="min-w-0 py-4 first:pt-0 last:pb-0">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="break-words font-medium text-brand-primary">{task.name}</span><Badge variant="neutral">{task.frequency}</Badge><span className="text-xs text-brand-textSecondary">Target {task.targetValue} {task.unit}</span></div>
+                <div className="flex max-w-full flex-wrap items-center gap-2 sm:shrink-0">
                   {task.unit === 'boolean' ? <input aria-label={`${task.name} complete`} type="checkbox" checked={actual >= 1} onChange={(event) => { const value = event.target.checked ? 1 : 0; setDrafts((old) => ({ ...old, [task._id]: String(value) })); void saveProgress(task, value); }} /> : <input aria-label={`${task.name} actual progress`} type="number" min="0" max="1000000" step="1" value={drafts[task._id] ?? entry?.actual ?? 0} onChange={(event) => setDrafts((old) => ({ ...old, [task._id]: event.target.value }))} className="w-20 rounded-md border border-brand-border px-2 py-1 text-sm" />}
                   {task.unit !== 'boolean' && <Button size="sm" variant="secondary" isLoading={busyId === task._id} onClick={() => saveProgress(task, actual)}>Save</Button>}
                   <Button size="sm" variant="ghost" onClick={() => removeTask(task)}>Remove</Button>
                 </div>
               </div>
               {suggestion !== undefined && <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-brand-textSecondary"><span>From today&apos;s interview activity: {suggestion} questions</span>{suggestion > 0 && suggestion !== actual && <Button size="sm" variant="ghost" onClick={() => setDrafts((old) => ({ ...old, [task._id]: String(suggestion) }))}>Use suggestion</Button>}</div>}
-              <Progress className="mt-2" value={Math.min(actual, task.targetValue)} max={task.targetValue} />
+              <div className="mt-2 flex items-center gap-3"><Progress className="min-w-0 flex-1" value={Math.min(actual, task.targetValue)} max={task.targetValue} variant={progressVariant as 'default' | 'success' | 'warning' | 'error' | 'intermediate'} /><span className="w-24 shrink-0 text-right text-xs font-medium text-brand-textSecondary">{actual} / {task.targetValue} · {percent}%</span></div>
             </div>;
           })}
         </div>

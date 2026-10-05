@@ -11,9 +11,15 @@ export async function resolveActiveResumeContext(userId: string) {
 }
 
 export async function resolveStoredResumeContext(userId: string, question: any) {
-  if (!question?.resumeVersionId) return resolveActiveResumeContext(userId);
-  const versionId = new mongoose.Types.ObjectId(String(question.resumeVersionId));
-  const resume: any = await Resume.findOne({ _id: question.resumeId, userId, isDeleted: false, versions: versionId }).lean();
+  let versionId = question?.resumeVersionId ? new mongoose.Types.ObjectId(String(question.resumeVersionId)) : null;
+  if (!versionId && question?.resumeProfileId) {
+    const legacyProfile: any = await ResumeProfile.findOne({ _id: question.resumeProfileId, userId }).select('resumeVersionId').lean();
+    versionId = legacyProfile?.resumeVersionId || null;
+  }
+  if (!versionId) return resolveActiveResumeContext(userId);
+  // Historical answer generation remains valid after a soft-deleted resume.
+  // Ownership and version membership are still enforced here.
+  const resume: any = await Resume.findOne({ ...(question.resumeId ? { _id: question.resumeId } : {}), userId, versions: versionId }).lean();
   if (!resume) throw new NotFoundError('Question resume context not found');
   const profile = await ResumeProfile.findOne({ userId, resumeVersionId: versionId }).lean();
   return { resumeId: resume._id, resumeVersionId: versionId, resumeName: question.resumeNameSnapshot || resume.name, profile };
