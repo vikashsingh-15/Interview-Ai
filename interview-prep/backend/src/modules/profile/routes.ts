@@ -166,6 +166,7 @@ router.get(
     const recent = await AIRequest.find({ userId: req.user.id })
       .sort({ createdAt: -1 }).limit(5)
       .select('purpose provider model promptVersion status createdAt').lean();
+    const lastSuccessful = recent.find((request: any) => request.status === 'completed');
 
     res.json({
       success: true,
@@ -187,6 +188,12 @@ router.get(
           purpose: r.purpose, provider: r.provider, model: r.model,
           status: r.status, at: r.createdAt,
         })),
+        lastSuccessful: lastSuccessful ? {
+          provider: lastSuccessful.provider,
+          model: lastSuccessful.model,
+          purpose: lastSuccessful.purpose,
+          at: lastSuccessful.createdAt,
+        } : null,
       },
     });
   })

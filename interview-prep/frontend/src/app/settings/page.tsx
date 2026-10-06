@@ -56,6 +56,7 @@ interface AIStatus {
   activeProvider: string | null;
   fallback: { configured: boolean; provider: string; model: string; hasApiKey: boolean };
   recentRequests?: Array<{ purpose: string; provider: string; model: string; status: string }>;
+  lastSuccessful?: { provider: string; model: string; purpose: string; at: string } | null;
 }
 
 const COUNT_FIELDS: Array<{
@@ -324,11 +325,12 @@ export default function SettingsPage() {
             <CardContent>
               <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
                 <div className="flex justify-between gap-4">
-                  <dt className="text-brand-textSecondary">Provider</dt>
+                  <dt className="text-brand-textSecondary">Configured provider</dt>
                   <dd className="font-medium text-brand-primary text-right">
                     {aiStatus.provider} / {aiStatus.model || 'no model set'}
                   </dd>
                 </div>
+                {aiStatus.lastSuccessful && <div className="flex justify-between gap-4 sm:col-span-2"><dt className="text-brand-textSecondary">Last successful request</dt><dd className="font-medium text-brand-primary text-right">{aiStatus.lastSuccessful.provider} / {aiStatus.lastSuccessful.model}</dd></div>}
                 <div className="flex justify-between gap-4">
                   <dt className="text-brand-textSecondary">API key</dt>
                   <dd className="font-medium text-brand-primary text-right">
