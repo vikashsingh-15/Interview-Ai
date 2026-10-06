@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import config from '../../config';
 import logger from '../../config/logger';
+import { ZodError } from 'zod';
 
 // Kept for compatibility with diagnostics/tests from the earlier two-provider
 // implementation. Provider order is now always configuration order.
@@ -9,6 +10,7 @@ export function setActiveProvider(provider: string | null): void { lastServedPro
 export function getActiveProvider(): string | null { return lastServedProvider; }
 
 export interface AIProviderCandidate {
+  slot: number;
   name: string;
   apiKey: string;
   model: string;
@@ -40,7 +42,7 @@ export function aiBaseURL():string {
 
 export function hasAI():boolean { return Boolean(config.ai.apiKey && config.ai.model); }
 
-/** True when at least one valid primary or fallback provider can serve requests. */
+/** True when at least one configured provider can serve requests. */
 export function hasAnyAI():boolean { return aiProviderCandidates().length > 0; }
 
 // A fallback provider is usable when both its key and model are set, and it
@@ -74,22 +76,41 @@ export function createAIClient(provider?:string):OpenAI {
 }
 
 /**
- * Ordered provider candidates: primary first, then the optional fallback.
- * When a fallback has taken over (sticky), it is tried first so an exhausted
- * primary is not re-attempted on every call.
+ * Ordered provider candidates with stable slots 1 through 4. Slots identify
+ * the configured model even if an earlier provider is unavailable.
  */
 export function aiProviderCandidates():AIProviderCandidate[] {
   const candidates:AIProviderCandidate[] = [];
-  for (const item of providerConfigs()) {
+  for (const [index, item] of providerConfigs().entries()) {
     if (!item.apiKey && !item.model) continue;
     if (!item.apiKey && !item.model && item.provider) continue;
     if (!item.apiKey && item.provider === config.ai.provider) continue;
     if (!item.apiKey || !item.model || !item.provider) throw new Error(`Configure provider ${item.provider || 'entry'} with provider, API key, and model`);
-    const candidate = { name:item.provider, apiKey:item.apiKey, model:item.model, baseURL:providerBaseURL(item.provider, item.customBaseURL) };
+    const candidate = { slot:index + 1, name:item.provider, apiKey:item.apiKey, model:item.model, baseURL:providerBaseURL(item.provider, item.customBaseURL) };
     if (candidates.some(c => c.name === candidate.name && c.model === candidate.model)) continue;
     candidates.push(candidate);
   }
   return candidates;
+}
+
+export function aiFailureDetails(error: unknown) {
+  const value = error as { status?:number; code?:unknown; body?:{code?:unknown}; name?:string; message?:string;
+    request_id?:unknown; requestId?:unknown } | null;
+  const status = typeof value?.status === 'number' ? value.status : undefined;
+  const rawCode = value?.code || value?.body?.code;
+  const code = typeof rawCode === 'string' && /^[a-z0-9_:-]{1,80}$/i.test(rawCode) ? rawCode : undefined;
+  const rawRequestId = value?.request_id || value?.requestId;
+  const providerRequestId = typeof rawRequestId === 'string' && /^[a-z0-9_-]{1,100}$/i.test(rawRequestId) ? rawRequestId : undefined;
+  const timeout = value?.name === 'APIConnectionTimeoutError' || (value?.name === 'APIConnectionError' && /timeout/i.test(value?.message || ''));
+  const reason = status === 429 ? 'RATE_LIMIT' : timeout ? 'TIMEOUT'
+    : error instanceof ZodError ? 'INVALID_SCHEMA'
+    : error instanceof SyntaxError ? 'INVALID_JSON'
+    : /empty or truncated|no JSON object|unterminated JSON object|no usable/i.test(value?.message || '') ? 'INVALID_RESPONSE'
+    : status ? 'HTTP_ERROR' : value?.name === 'APIConnectionError' ? 'NETWORK_ERROR' : 'REQUEST_ERROR';
+  return { status, code, providerRequestId, reason, timeout, rateLimited: status === 429,
+    errorType: typeof value?.name === 'string' ? value.name : 'UnknownError',
+    validationIssueCodes: error instanceof ZodError ? error.issues.map(issue => issue.code).slice(0, 8) : undefined,
+    validationIssueCount: error instanceof ZodError ? error.issues.length : undefined };
 }
 
 /**
@@ -98,7 +119,7 @@ export function aiProviderCandidates():AIProviderCandidate[] {
  * errors, or returns output `fn` cannot use (throw to trigger fallback).
  */
 export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCandidate) => Promise<T>,
-  preferredProvider?: string):Promise<T> {
+  preferredProvider?: string, context: { operation?:string; aiRequestId?:string } = {}):Promise<T> {
   const all = aiProviderCandidates();
   // A caller can pin which provider serves this call, e.g. to give a fallback a
   // turn when the primary's output was technically valid but unusable.
@@ -106,34 +127,39 @@ export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCa
     ? [...all].sort((a,b)=>a.name === preferredProvider ? -1 : b.name === preferredProvider ? 1 : 0)
     : all;
   if(!candidates.length) throw new Error('Set AI_API_KEY and AI_MODEL to enable AI');
+  const requestStarted = Date.now();
+  const attemptedSlots:number[] = [];
   let lastError:unknown;
   for(let i=0;i<candidates.length;i++) {
     const candidate = candidates[i];
+    attemptedSlots.push(candidate.slot);
     const attemptStarted = Date.now();
+    const details = { module:'ai', operation:context.operation || 'ai_request', aiRequestId:context.aiRequestId,
+      providerSlot:candidate.slot, provider:candidate.name, model:candidate.model,
+      attempt:`${i + 1}/${candidates.length}` };
     try {
-      logger.info('[AI_REQUEST] provider attempt', { provider: candidate.name, model: candidate.model, attempt: `${i + 1}/${candidates.length}` });
+      logger.info('[AI_REQUEST] provider attempt', details);
       const client = new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,timeout:config.ai.timeout,maxRetries:config.ai.retryCount});
       const result = await fn(client, candidate);
       if (candidate.name !== config.ai.provider) setActiveProvider(candidate.name);
-      logger.info('[AI_SUCCESS] provider attempt', { provider: candidate.name, model: candidate.model, attempt: `${i + 1}/${candidates.length}`, durationMs: Date.now() - attemptStarted });
+      logger.info('[AI_SUCCESS] provider attempt', { ...details, durationMs: Date.now() - attemptStarted });
+      logger.info('[AI_COMPLETE] request succeeded', { module:'ai', operation:details.operation, aiRequestId:context.aiRequestId,
+        finalProviderSlot:candidate.slot, finalProvider:candidate.name, finalModel:candidate.model,
+        attemptedSlots, totalDurationMs:Date.now() - requestStarted });
       return result;
     } catch(error) {
       lastError = error;
-      const providerError = error as any;
-      logger.warn('[AI_FAILURE] provider attempt', { provider: candidate.name, model: candidate.model,
-        attempt: `${i + 1}/${candidates.length}`, status: providerError?.status, code: providerError?.code,
-        error: providerError instanceof Error ? providerError.message : String(providerError),
-        timeout: providerError?.name === 'APIConnectionTimeoutError' || /timeout/i.test(String(providerError?.message || '')),
-        rateLimited: providerError?.status === 429, durationMs: Date.now() - attemptStarted });
+      logger.warn('[AI_FAILURE] provider attempt', { ...details, ...aiFailureDetails(error),
+        durationMs: Date.now() - attemptStarted, fallbackTriggered:i < candidates.length - 1 });
       if(i < candidates.length - 1) {
         logger.warn('[AI_FALLBACK] AI provider failed; trying next provider', {
-          failedProvider: candidate.name, failedModel: candidate.model,
-          attempt: `${i + 1}/${candidates.length}`,
-          error: error instanceof Error ? error.message : String(error),
-          nextProvider: candidates[i + 1].name,
+          ...details, nextProviderSlot:candidates[i + 1].slot,
+          nextProvider:candidates[i + 1].name, nextModel:candidates[i + 1].model,
         });
       }
     }
   }
+  logger.error('[AI_COMPLETE] all providers failed', { module:'ai', operation:context.operation || 'ai_request',
+    aiRequestId:context.aiRequestId, attemptedSlots, ...aiFailureDetails(lastError), totalDurationMs:Date.now() - requestStarted });
   throw lastError;
 }

@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import config from '../../src/config';
 import { aiBaseURL, createAIClient, hasAI, hasAnyAI, hasFallbackAI, aiProviderCandidates, withAIFallback, setActiveProvider, getActiveProvider } from '../../src/common/services/ai-provider';
 import { extractJsonObject } from '../../src/common/services/structured-ai';
+import logger from '../../src/config/logger';
 jest.mock('openai',()=>({__esModule:true,default:jest.fn().mockImplementation(()=>({}))}));
 beforeEach(()=>{
   config.ai.provider='openrouter';config.ai.apiKey='fixture-key';config.ai.model='fixture-model';config.ai.customBaseURL='';
@@ -139,5 +140,53 @@ describe('structured AI response parsing',()=>{
   test('responses without a complete object are rejected',()=>{
     expect(()=>extractJsonObject('no json here')).toThrow('no JSON object');
     expect(()=>extractJsonObject('{"a":1')).toThrow('unterminated');
+  });
+});
+
+describe('four-provider Render diagnostics',()=>{
+  beforeEach(()=>{
+    config.ai.fallback={provider:'custom',apiKey:'fixture-2',model:'model-2',customBaseURL:'https://nvidia.example/v1'};
+    config.ai.fallback2={provider:'openrouter',apiKey:'fixture-3',model:'model-3',customBaseURL:''};
+    config.ai.fallback3={provider:'tokenrouter',apiKey:'fixture-4',model:'model-4',customBaseURL:''};
+  });
+
+  test.each([1,2,3,4])('success at provider slot %i logs every preceding failure and final model',async (successSlot)=>{
+    const info=jest.spyOn(logger,'info').mockImplementation(()=>logger);
+    const warn=jest.spyOn(logger,'warn').mockImplementation(()=>logger);
+    try {
+      const result=await withAIFallback(async (_client,candidate)=>{
+        if(candidate.slot!==successSlot) {
+          const error=Object.assign(new Error('sensitive prompt must not appear'),{status:429,code:'rate_limit'});
+          throw error;
+        }
+        return candidate.model;
+      },undefined,{operation:'question_generation',aiRequestId:'ai-test-123'});
+      expect(result).toBe(successSlot===1?'fixture-model':`model-${successSlot}`);
+      const requests=(info.mock.calls as unknown as Array<[string, any]>).filter(([message])=>message==='[AI_REQUEST] provider attempt');
+      const failures=(warn.mock.calls as unknown as Array<[string, any]>).filter(([message])=>message==='[AI_FAILURE] provider attempt');
+      expect(requests.map(([,meta])=>(meta as any).providerSlot)).toEqual(Array.from({length:successSlot},(_,i)=>i+1));
+      expect(failures.map(([,meta])=>(meta as any).providerSlot)).toEqual(Array.from({length:successSlot-1},(_,i)=>i+1));
+      expect(failures.every(([,meta])=>(meta as any).reason==='RATE_LIMIT')).toBe(true);
+      expect(JSON.stringify(failures)).not.toContain('sensitive prompt');
+      expect(info).toHaveBeenCalledWith('[AI_COMPLETE] request succeeded',expect.objectContaining({
+        operation:'question_generation',aiRequestId:'ai-test-123',finalProviderSlot:successSlot,finalModel:result,
+      }));
+    } finally { info.mockRestore();warn.mockRestore(); }
+  });
+
+  test('all four failures are logged with configured slots and no success',async()=>{
+    const warn=jest.spyOn(logger,'warn').mockImplementation(()=>logger);
+    const error=jest.spyOn(logger,'error').mockImplementation(()=>logger);
+    try {
+      await expect(withAIFallback(async()=>{throw new SyntaxError('resume text must stay private');},
+        undefined,{operation:'question_generation',aiRequestId:'ai-test-all'})).rejects.toThrow();
+      const failures=(warn.mock.calls as unknown as Array<[string, any]>).filter(([message])=>message==='[AI_FAILURE] provider attempt');
+      expect(failures.map(([,meta])=>(meta as any).providerSlot)).toEqual([1,2,3,4]);
+      expect(failures.every(([,meta])=>(meta as any).reason==='INVALID_JSON')).toBe(true);
+      expect(error).toHaveBeenCalledWith('[AI_COMPLETE] all providers failed',expect.objectContaining({
+        operation:'question_generation',aiRequestId:'ai-test-all',attemptedSlots:[1,2,3,4],reason:'INVALID_JSON',
+      }));
+      expect(JSON.stringify(failures)).not.toContain('resume text');
+    } finally { warn.mockRestore();error.mockRestore(); }
   });
 });

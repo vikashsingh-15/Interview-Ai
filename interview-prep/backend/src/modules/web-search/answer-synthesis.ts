@@ -1,4 +1,4 @@
-import { withAIFallback, hasAI } from '../../common/services/ai-provider';
+import { withAIFallback, hasAI, aiFailureDetails } from '../../common/services/ai-provider';
 import config from '../../config';
 import logger from '../../config/logger';
 import { SearchResult, SynthesizedAnswer } from './web-search.types';
@@ -52,7 +52,7 @@ export async function synthesizeAnswer(
         const parsedJson = JSON.parse(completion.choices?.[0]?.message?.content || '{}');
         if (!String(parsedJson.summary || '').trim()) throw new Error('AI returned no usable summary');
         return parsedJson;
-      });
+      }, undefined, { operation:'web_search_synthesis' });
 
       return {
         summary: String(parsed.summary || '').trim() || 'No answer could be synthesized.',
@@ -65,7 +65,7 @@ export async function synthesizeAnswer(
       };
     } catch (err) {
       logger.warn('AI answer synthesis failed on all providers, falling back to heuristic', {
-        error: (err as Error).message,
+        ...aiFailureDetails(err),
       });
     }
   }

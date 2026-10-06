@@ -199,7 +199,7 @@ describe('external AI provider failures', () => {
     expect(output).toContain('AI request failed');
     expect(output).toContain('status=403');
     expect(output).toContain('aiRequestId=ai-req-1');
-    expect(output).toContain('insufficient_user_quota');
+    expect(output).toContain('code=insufficient_user_quota');
     expect(output).not.toContain('sk-secret-value');
   });
 
@@ -220,7 +220,7 @@ describe('external AI provider failures', () => {
     })).rejects.toThrow('provider unavailable');
     await flush();
 
-    expect(captured.join('')).toContain('requestId=prov-req-11');
+    expect(captured.join('')).toContain('providerRequestId=prov-req-11');
   });
 });
 

@@ -1,4 +1,4 @@
-import { withAIFallback, hasAnyAI, aiProviderCandidates } from './ai-provider';
+import { withAIFallback, hasAnyAI, aiFailureDetails } from './ai-provider';
 import { createHash } from 'crypto';
 import mongoose, { Schema } from 'mongoose';
 import { z } from 'zod';
@@ -76,36 +76,18 @@ export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
       if (!content || response.choices[0]?.finish_reason === 'length') throw new Error('AI returned empty or truncated output');
       const parsed = input.schema.parse(extractJsonObject(content));
       return { value: parsed, provider: candidate.name, model: candidate.model, tokens: response.usage?.total_tokens };
-    }, input.preferredProvider);
+    }, input.preferredProvider, { operation:input.purpose, aiRequestId:String(log._id) });
     await AIRequest.updateOne({ _id: log._id }, { status: 'completed',
       tokens, provider, model, durationMs: Date.now() - started });
     return { result: value, provider, model, fallbackUsed: provider !== config.ai.provider };
   } catch (error) {
     await AIRequest.updateOne({ _id: log._id }, { status: 'failed', durationMs: Date.now() - started });
-    const aiError = error instanceof Error ? error : new Error(String(error));
-    const status = (aiError as any)?.status;
-    const providerName = input.preferredProvider || config.ai.provider;
-    const providerModel = input.preferredProvider
-      ? (aiProviderCandidates().find(c => c.name === input.preferredProvider)?.model)
-      : config.ai.model;
-    const providerErrorBody = (aiError as any)?.body;
-    const redactedBody = typeof providerErrorBody === 'object' && providerErrorBody
-      ? Object.fromEntries(Object.entries(providerErrorBody).filter(([k]) => !/key|token|secret|password|verifier|cookie|authorization/i.test(k)))
-      : undefined;
-    const providerErrorRequestId = (aiError as any)?.request_id || (aiError as any)?.requestId || undefined;
-    const providerErrStack = (aiError as any)?.stack;
     logger.warn('AI request failed', {
       module: 'ai',
       aiRequestId: String(log._id),
       purpose: input.purpose,
-      provider: providerName,
-      model: providerModel,
-      status,
-      requestId: providerErrorRequestId,
+      ...aiFailureDetails(error),
       durationMs: Date.now() - started,
-      error: aiError.message,
-      providerErrorBody: redactedBody,
-      stack: providerErrStack,
     });
     throw error;
   }
