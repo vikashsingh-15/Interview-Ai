@@ -1,4 +1,5 @@
 import mongoose, { Schema, Model, Document } from 'mongoose';
+import logger from '../../config/logger';
 
 /**
  * DailyRecord
@@ -195,6 +196,7 @@ dailyRecordSchema.statics.findOrCreateForDate = async function (this: any,
   } catch (err: any) {
     // Concurrent creation — fetch the winner
     if (err && err.code === 11000) {
+      logger.debug('Duplicate daily record ignored', { module: 'calendar', collection: 'dailyRecords' });
       record = await this.findOne({ userId, dateKey });
       if (record) return { record, created: false };
     }

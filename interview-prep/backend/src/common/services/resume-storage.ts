@@ -4,6 +4,7 @@ import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import config from '../../config';
+import logger from '../../config/logger';
 import { NotFoundError } from '../filters/error-filter';
 
 function localPath(key:string):string {
@@ -26,7 +27,14 @@ export const resumeStorage={
     const upload=store.openUploadStream(key,{metadata:{contentType}});
     try {await pipeline(Readable.from([buffer]),upload);}
     catch(error) {
-      await store.delete(upload.id).catch(()=>undefined);
+      // Best-effort cleanup of a half-written upload; never mask the original
+      // failure, but surface a failed cleanup instead of swallowing it.
+      await store.delete(upload.id).catch((cleanupError)=>{
+        logger.warn('Failed to remove partially uploaded resume file', {
+          module: 'storage', byteLength: buffer.length,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
       throw error;
     }
   },

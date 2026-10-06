@@ -176,7 +176,7 @@ export function localExtraction(text: string) {
     if (!key || key.length < 2 || key.length > 100 || seen.has(key)) return false;
     seen.add(key); return true;
   }).map(name => ({ name, category: 'other' as const, confidence: 0.5 }));
-  const dateRange = /(?:^|\s)([A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[/.\-]\d{4}|\d{4})\s*(?:[-–—]|to)\s*(Present|Current|Now|[A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[/.\-]\d{4}|\d{4})/i;
+  const dateRange = /(?:^|\s|[-–—])([A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[-./]\d{4}|\d{4})\s*(?:[-–—]|to)\s*(Present|Current|Now|[A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[-./]\d{4}|\d{4})/i;
   const sectionLines = (names: RegExp, stop: RegExp) => {
     const start = lines.findIndex(line => names.test(line.replace(/[:：]$/, '').trim()));
     if (start < 0) return [];

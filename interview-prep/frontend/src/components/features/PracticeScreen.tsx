@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/Progress';
-import api from '@/lib/api';
+import api, { logQuestionGenerationError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { AnswerView, RevealedAnswer } from '@/components/features/AnswerView';
 import {
@@ -382,7 +382,7 @@ export function PracticeScreen({ source }: { source?: { kind: 'project' | 'exper
       setPractice((prev) => (prev ? { ...prev, questions: [...prev.questions, ...qs] } : prev));
       setNotice(message ?? null);
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || 'Could not generate another question. Try again.');
+      setError(logQuestionGenerationError('practice.generate', err));
     } finally {
       setNewQuestionLoading(false);
     }

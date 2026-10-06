@@ -167,23 +167,41 @@ export function errorHandler(
     isOperational = true;
   }
 
-  // Log error
+  // Log error with the same correlation context the request was started with;
+  // request-scoped fields (requestId/method/route/userId) come from AsyncLocalStorage.
+  // Use the full original path: req.route.path is mount-relative (/list rather
+  // than /api/resume/list) and req.baseUrl is already restored by the time an
+  // error reaches this middleware. Query strings are dropped because they can
+  // carry tokens.
+  const route = (req.originalUrl || req.path).split('?')[0];
+  const context: Record<string, unknown> = {
+    module: 'http',
+    route,
+    method: req.method,
+    requestId,
+    code,
+    error: err instanceof Error ? err.message : String(err),
+  };
+  if ((req as any).userId) context.userId = (req as any).userId;
+  if (err instanceof Error && !isOperational) context.stack = err.stack;
+
+  // Optional MongoDB operation context so a DB failure is identifiable in Render.
+  const mongoErr = (err as any);
+  // Both the driver (Mongo*) and mongoose (Mongoose*) name these errors; the
+  // selection error is 'MongoServerSelectionError' at runtime. Duplicate-key
+  // (11000) is already handled above as a 409.
+  const mongoName = typeof mongoErr?.name === 'string' ? mongoErr.name : '';
+  if (/^Mongo/i.test(mongoName) || (typeof mongoErr?.code === 'number' && mongoErr?.code !== 11000)) {
+    context.db = true;
+    if (mongoErr?.message && typeof mongoErr?.message === 'string') {
+      context.dbMessage = mongoErr.message;
+    }
+  }
+
   if (statusCode >= 500) {
-    logger.error('Server error', {
-      requestId,
-      error: err.message,
-      stack: err.stack,
-      url: req.path,
-      method: req.method,
-    });
+    logger.error('Server error', context);
   } else {
-    logger.warn('Client error', {
-      requestId,
-      error: err.message,
-      code,
-      url: req.path,
-      method: req.method,
-    });
+    logger.warn('Client error', context);
   }
 
   // Security: Don't expose internal errors in production

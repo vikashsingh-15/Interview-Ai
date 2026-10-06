@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import config from '../../config';
+import logger from '../../config/logger';
 import { asyncHandler, ForbiddenError } from '../../common/filters/error-filter';
 import { googleAuth } from './google.service';
 import { authService } from './auth.service';
@@ -26,7 +27,16 @@ router.get('/google/callback',authRateLimiter,asyncHandler(async(req,res)=>{
     res.clearCookie('oauth_state',cookieOptions);
     res.clearCookie('interview_prep_refresh',cookieOptions);
     res.redirect(config.urls.frontend+'/dashboard');
-  } catch {
+  } catch (err) {
+    // Never log OAuth authorization codes, state values, or tokens.
+    const requestId = (req as any).requestId || '-';
+    const userId = (req as any).userId || undefined;
+    logger.error('Google OAuth callback failed', {
+      module: 'auth', route: req.originalUrl, method: req.method,
+      requestId, userId,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.clearCookie('oauth_state',cookieOptions);
     res.redirect(config.urls.frontend+'/login?error=google_login_failed');
   }

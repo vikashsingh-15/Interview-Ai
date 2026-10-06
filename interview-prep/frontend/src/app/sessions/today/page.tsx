@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Progress } from '@/components/ui/Progress';
-import api from '@/lib/api';
+import api, { logQuestionGenerationError } from '@/lib/api';
 import { RevisionSchedule } from '@/components/revision/RevisionSchedule';
 import { cn } from '@/lib/utils';
 
@@ -260,7 +260,7 @@ export default function TodaySessionPage() {
     } catch (err: any) {
       const latest = await loadSession();
       if (!latest || latest.generationState === 'failed') {
-        setError(latest?.generationMessage || err?.response?.data?.error?.message || 'Could not regenerate questions. Try again.');
+        setError(logQuestionGenerationError('today.regenerate', err));
       }
     } finally {
       setRegenerating(false);

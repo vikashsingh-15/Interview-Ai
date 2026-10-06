@@ -6,6 +6,8 @@ jest.mock('openai',()=>({__esModule:true,default:jest.fn().mockImplementation(()
 beforeEach(()=>{
   config.ai.provider='openrouter';config.ai.apiKey='fixture-key';config.ai.model='fixture-model';config.ai.customBaseURL='';
   config.ai.fallback.provider='openrouter';config.ai.fallback.apiKey='';config.ai.fallback.model='';config.ai.fallback.customBaseURL='';
+  config.ai.fallback2.provider='';config.ai.fallback2.apiKey='';config.ai.fallback2.model='';config.ai.fallback2.customBaseURL='';
+  config.ai.fallback3.provider='';config.ai.fallback3.apiKey='';config.ai.fallback3.model='';config.ai.fallback3.customBaseURL='';
   setActiveProvider(null);
 });
 test.each([
@@ -68,7 +70,7 @@ describe('fallback provider',()=>{
     config.ai.fallback.provider='gemini';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';
     setActiveProvider('gemini');
     expect(getActiveProvider()).toBe('gemini');
-    expect(aiProviderCandidates().map(c=>c.name)).toEqual(['gemini','openrouter']);
+    expect(aiProviderCandidates().map(c=>c.name)).toEqual(['openrouter','gemini']);
   });
   test('withAIFallback uses the primary when it succeeds',async()=>{
     config.ai.fallback.provider='gemini';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';
@@ -84,8 +86,8 @@ describe('fallback provider',()=>{
     });
     expect(result.served).toBe('gemini');
     expect(getActiveProvider()).toBe('gemini');
-    // Sticky: next call attempts the fallback first.
-    expect(aiProviderCandidates().map(c=>c.name)).toEqual(['gemini','openrouter']);
+    // Strict order is retained for every request; fallback success is diagnostic only.
+    expect(aiProviderCandidates().map(c=>c.name)).toEqual(['openrouter','gemini']);
   });
   test('withAIFallback throws the primary error when every provider fails',async()=>{
     config.ai.fallback.provider='gemini';config.ai.fallback.apiKey='fallback-key';config.ai.fallback.model='fallback-model';

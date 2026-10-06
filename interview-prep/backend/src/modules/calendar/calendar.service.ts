@@ -8,6 +8,7 @@ import DailyRecord, {
 import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
 import { QuestionHistory } from '../questions/question-history.model';
 import { ValidationError } from '../../common/filters/error-filter';
+import { runJob } from '../../common/logging/job';
 
 function normalizeQuestionTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -250,6 +251,15 @@ export const calendarService = {
     daysProcessed: number;
     entriesCreated: number;
   }> {
+    return runJob('calendar-backfill', { userId }, () => backfillCalendarForUser(userId));
+  },
+};
+
+/** Long-running calendar rebuild; start/success/failure come from runJob. */
+async function backfillCalendarForUser(userId: string): Promise<{
+  daysProcessed: number;
+  entriesCreated: number;
+}> {
     const sessions = await DailySession.find({
       userId: new mongoose.Types.ObjectId(userId),
       isDeleted: false,
@@ -285,8 +295,7 @@ export const calendarService = {
 
     logger.info('Calendar backfill complete', { userId, daysProcessed: sessions.length, entriesCreated });
     return { daysProcessed: sessions.length, entriesCreated };
-  },
-};
+}
 
 /** Recompute record totals from the entries list. */
 export function recomputeTotals(record: IDailyRecordDocument): void {

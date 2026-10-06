@@ -1,8 +1,9 @@
-import { withAIFallback, hasAnyAI } from './ai-provider';
+import { withAIFallback, hasAnyAI, aiProviderCandidates } from './ai-provider';
 import { createHash } from 'crypto';
 import mongoose, { Schema } from 'mongoose';
 import { z } from 'zod';
 import config from '../../config';
+import logger from '../../config/logger';
 
 const usageSchema = new Schema({
   userId: { type: String, required: true }, day: { type: String, required: true },
@@ -29,7 +30,7 @@ export interface StructuredAIResult<T> {
  */
 export function extractJsonObject(content: string): unknown {
   const text = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  try { return JSON.parse(text); } catch { /* fall through to a bounded scan */ }
+  try { return JSON.parse(text); } catch { logger.debug('AI response JSON fallback scan', { module: 'ai', purpose: 'parse' }); }
   const start = text.indexOf('{');
   if (start === -1) throw new Error('AI response contained no JSON object');
   let depth = 0, inString = false, escaped = false;
@@ -81,6 +82,31 @@ export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
     return { result: value, provider, model, fallbackUsed: provider !== config.ai.provider };
   } catch (error) {
     await AIRequest.updateOne({ _id: log._id }, { status: 'failed', durationMs: Date.now() - started });
+    const aiError = error instanceof Error ? error : new Error(String(error));
+    const status = (aiError as any)?.status;
+    const providerName = input.preferredProvider || config.ai.provider;
+    const providerModel = input.preferredProvider
+      ? (aiProviderCandidates().find(c => c.name === input.preferredProvider)?.model)
+      : config.ai.model;
+    const providerErrorBody = (aiError as any)?.body;
+    const redactedBody = typeof providerErrorBody === 'object' && providerErrorBody
+      ? Object.fromEntries(Object.entries(providerErrorBody).filter(([k]) => !/key|token|secret|password|verifier|cookie|authorization/i.test(k)))
+      : undefined;
+    const providerErrorRequestId = (aiError as any)?.request_id || (aiError as any)?.requestId || undefined;
+    const providerErrStack = (aiError as any)?.stack;
+    logger.warn('AI request failed', {
+      module: 'ai',
+      aiRequestId: String(log._id),
+      purpose: input.purpose,
+      provider: providerName,
+      model: providerModel,
+      status,
+      requestId: providerErrorRequestId,
+      durationMs: Date.now() - started,
+      error: aiError.message,
+      providerErrorBody: redactedBody,
+      stack: providerErrStack,
+    });
     throw error;
   }
 }

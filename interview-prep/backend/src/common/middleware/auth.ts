@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { createHash, randomBytes } from 'crypto';
 import config from '../../config';
 import { UnauthorizedError, ForbiddenError } from '../filters/error-filter';
+import { updateRequestContext } from '../logging/request-context';
 import User from '../../modules/auth/user.model';
 import { Session } from '../../modules/auth/index.model';
 
@@ -26,6 +27,8 @@ export async function authenticate(req:AuthenticatedRequest,res:Response,next:Ne
     if(!user || user.isAccountDeleted) throw new UnauthorizedError('Session expired or revoked');
     req.user={id:String(user._id),email:user.email,role:user.role || 'user'};
     req.authSession={id:String(session._id),createdAt:session.createdAt};
+    // Correlate every log line for the rest of this request with the user.
+    updateRequestContext({ userId: req.user.id });
     next();
   } catch(error) { next(error); }
 }

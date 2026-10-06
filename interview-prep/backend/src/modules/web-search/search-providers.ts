@@ -49,7 +49,7 @@ async function searchWithSerpApi(query: string, limit: number): Promise<SearchRe
 
     const res = await fetchWithTimeout(url, config.search.scrapeTimeoutMs);
     if (!res.ok) {
-      logger.warn('SerpApi request failed', { status: res.status });
+      logger.warn('SerpApi request failed', { module: 'search', provider: 'serpapi', status: res.status });
       return [];
     }
 
@@ -79,7 +79,7 @@ async function searchWithSerpApi(query: string, limit: number): Promise<SearchRe
     }
     return results.filter((r) => r.url || r.snippet);
   } catch (err) {
-    logger.warn('SerpApi search error', { error: (err as Error).message });
+    logger.warn('SerpApi search error', { module: 'search', provider: 'serpapi', error: (err as Error).message });
     return [];
   }
 }
@@ -124,6 +124,7 @@ function parseDuckDuckGoHtml(html: string): DdgResult[] {
       try {
         href = decodeURIComponent(href.split('uddg=')[1].split('&')[0]);
       } catch {
+        logger.debug('Skipping result with undecodable redirect URL', { module: 'search', provider: 'duckduckgo' });
         continue;
       }
     } else if (href.startsWith('//')) {
@@ -148,7 +149,8 @@ function parseDuckDuckGoHtml(html: string): DdgResult[] {
         source: u.hostname,
       });
     } catch {
-      // skip malformed URLs
+      // Malformed result URL: skip it, but keep the skip visible at debug level.
+      logger.debug('Skipping malformed search result URL', { module: 'search', provider: 'duckduckgo' });
     }
   }
   return results;
@@ -166,7 +168,7 @@ async function searchWithDuckDuckGo(query: string, limit: number): Promise<Searc
       }
     );
     if (!res.ok) {
-      logger.warn('DuckDuckGo request failed', { status: res.status });
+      logger.warn('DuckDuckGo request failed', { module: 'search', provider: 'duckduckgo', status: res.status });
       return [];
     }
     const html = await res.text();
@@ -174,7 +176,7 @@ async function searchWithDuckDuckGo(query: string, limit: number): Promise<Searc
       .slice(0, limit)
       .map((r, i) => ({ ...r, score: 50 - i }));
   } catch (err) {
-    logger.warn('DuckDuckGo search error', { error: (err as Error).message });
+    logger.warn('DuckDuckGo search error', { module: 'search', provider: 'duckduckgo', error: (err as Error).message });
     return [];
   }
 }
@@ -202,7 +204,7 @@ async function searchWithStackExchange(query: string, limit: number): Promise<Se
       config.search.scrapeTimeoutMs
     );
     if (!searchRes.ok) {
-      logger.warn('StackExchange search failed', { status: searchRes.status });
+      logger.warn('StackExchange search failed', { module: 'search', provider: 'stackexchange', status: searchRes.status });
       return [];
     }
     const data: any = await searchRes.json();
@@ -231,8 +233,13 @@ async function searchWithStackExchange(query: string, limit: number): Promise<Se
             acceptedAnswers[a.answer_id] = a;
           }
         }
-      } catch {
-        // answer fetch is best-effort
+      } catch (error) {
+        // Answer bodies are optional enrichment; log the external API failure
+        // but keep the questions themselves.
+        logger.warn('StackExchange answer fetch failed', {
+          module: 'search', provider: 'stackexchange', answerCount: answerIds.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -259,7 +266,7 @@ async function searchWithStackExchange(query: string, limit: number): Promise<Se
       };
     });
   } catch (err) {
-    logger.warn('StackExchange search error', { error: (err as Error).message });
+    logger.warn('StackExchange search error', { module: 'search', provider: 'stackexchange', error: (err as Error).message });
     return [];
   }
 }
@@ -369,8 +376,10 @@ export async function scrapePage(url: string): Promise<ExtractedPageContent> {
       }
       try {
         await reader.cancel();
-      } catch {
-        // ignore
+      } catch (error) {
+        logger.debug('Could not cancel page stream after byte cap', {
+          module: 'search', error: error instanceof Error ? error.message : String(error),
+        });
       }
     } else {
       html = await res.text();
@@ -387,11 +396,13 @@ export async function scrapePage(url: string): Promise<ExtractedPageContent> {
       fetchedAt,
     };
   } catch (err) {
+    const error = err instanceof Error ? err.message : 'Scrape failed';
+    logger.warn('Page scrape failed', { module: 'search', provider: 'scrape', url, error });
     return {
       url,
       content: '',
       fetchedAt,
-      error: err instanceof Error ? err.message : 'Scrape failed',
+      error,
     };
   }
 }

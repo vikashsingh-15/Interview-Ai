@@ -191,9 +191,19 @@ export async function questionEmbedding(text: string): Promise<number[] | undefi
           timeout:config.ai.timeout, maxRetries:config.ai.retryCount });
         const result = await client.embeddings.create({ model, input: text });
         return result.data[0]?.embedding;
-      } catch { /* try the next provider */ }
+      } catch (err) {
+        logger.debug('Question embedding fallback to next provider', {
+          module: 'personalized', purpose: 'embedding',
+          provider: candidate.name, error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-  } catch { /* invalid provider configuration; skip semantic checks */ }
+  } catch (err) {
+    logger.debug('Question embedding unavailable, using lexical dedup', {
+      module: 'personalized', purpose: 'embedding',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   return undefined;
 }
 
@@ -264,7 +274,7 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     if (seenTexts.concat(accepted.map(a=>a.question)).some(t=>nearDuplicate(t,q.question))) { note('duplicate'); return; }
     // Semantic comparison is optional and explicit; exact/lexical exclusion always runs.
     let embedding:number[]|undefined;
-    try { embedding = await questionEmbedding(q.question); } catch { /* lexical checks still protect exact repeats */ }
+    try { embedding = await questionEmbedding(q.question); } catch (err) { logger.debug('Question embedding skipped during dedup', { module: 'personalized', purpose: 'dedup', error: err instanceof Error ? err.message : String(err) }); }
     if (embedding && allExposure.some(e=>e.embeddingModel === config.ai.embeddingModel &&
         cosine(embedding!,e.embedding || []) >= 0.97)) { note('semantic_duplicate'); return; }
     const normalizedHash = questionHash(q.question);
@@ -304,36 +314,22 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
 
   try {
     if (accepted.length < count && hasAnyAI()) {
-      const generate = async (preferredProvider?: string) => structuredAIMeta({ userId,
-        purpose:'personalized-questions', version:'question-v3', preferredProvider,
+      const generate = async () => structuredAIMeta({ userId,
+        purpose:'question_generation', version:'question-v4',
         schema:generatedBatchSchema, context:{ ...context, count:count-accepted.length,
           existingBankQuestions:bank.map(q=>q.question).slice(0,40) },
-        system: `You are a role-agnostic personalized interviewer. The backend plan determines the topic and category.
-Use ONLY confirmedFacts for statements about the candidate's actual experience; cite factIds. Never invent resume details.
-General/hypothetical scenarios must be explicitly framed as hypothetical, not things the candidate did.
-Generate different questions, not rewritten excluded questions. Concepts MAY repeat. Vary the scenario and reasoning task.
-Respect difficulty, target level, interview category and excluded topics; no default Java/SDE-2 assumption.
-No company provenance claims. No fabricated URLs. For a project section, only use confirmed project facts whose name matches the requested topic and cite their factIds. If no matching confirmed project is supplied, create a hypothetical portfolio-design prompt with framing "hypothetical", factIds [], and do not imply the candidate built, shipped or contributed to it. For system_design sections, provide an architecture/design problem with explicit scale, reliability, data or trade-off reasoning.
-Return {"questions":[{"question":"specific, answerable prompt","subtopic":"...","concepts":["..."],
-"difficulty":"EASY|MEDIUM|HARD|EXPERT","archetype":"CONCEPTUAL|INTERNAL_WORKING|DEBUGGING|PRODUCTION_SCENARIO|TRADE_OFF|DESIGN|DEEP_DIVE",
-"detailedAnswer":"an interview-ready answer of at least 350 characters: direct response, technical mechanism, concrete example, trade-offs, and when alternatives are appropriate","estimatedAnswerTimeSeconds":180,
-"factIds":[0],"framing":"hypothetical|general_knowledge|confirmed_experience"}]}.
-Do not generate executable coding problems here; coding uses a validated curated bank.`,
+        system: `Generate ${count-accepted.length} distinct interview questions about the requested topic and category.
+Ground confirmed experience only in confirmedFacts and cite factIds. Never invent resume or company claims.
+Frame hypothetical scenarios as hypothetical. Respect difficulty, target level, excluded topics, and existing questions.
+Each question needs a concise interview-ready detailedAnswer, useful subtopic/concepts, archetype, difficulty, estimatedAnswerTimeSeconds, factIds, and framing.
+Return only {"questions":[{"question":"...","subtopic":"...","concepts":["..."],"difficulty":"EASY|MEDIUM|HARD|EXPERT","archetype":"CONCEPTUAL|INTERNAL_WORKING|DEBUGGING|PRODUCTION_SCENARIO|TRADE_OFF|DESIGN|DEEP_DIVE","detailedAnswer":"...","estimatedAnswerTimeSeconds":180,"factIds":[],"framing":"hypothetical|general_knowledge|confirmed_experience"}]}. Do not generate coding problems.`,
       });
       // A provider that answers but whose output fails validation is as useless
       // as one that errors, so every configured provider gets a turn before the
       // topic is called unavailable.
       let aiError:any;
-      for (const provider of aiProviderCandidates().map(c=>c.name)) {
-        if (accepted.length >= count) break;
-        let meta;
-        try { meta = await generate(provider); }
-        catch (error) {
-          // withAIFallback already walks every provider, so reaching here means
-          // the whole chain is down; stop and report the provider failure.
-          aiError = error;
-          break;
-        }
+      try {
+        const meta = await generate();
         if (meta.provider !== config.ai.provider) {
           logger.info('Fallback AI provider served question generation', { topic,
             primary:`${config.ai.provider}/${config.ai.model}`, served:`${meta.provider}/${meta.model}` });
@@ -356,7 +352,7 @@ Do not generate executable coding problems here; coding uses a validated curated
           const factIds = (q.factIds||[]).filter((id:number)=>Number.isInteger(id) && id>=0 && id<facts.length);
           await persist(q, factIds, meta.model, soft.length>0);
         }
-      }
+      } catch (error) { aiError = error; }
       if (!accepted.length) {
         if (aiError) throw aiError;
         const reasons = Object.entries(rejections).map(([reason,n])=>`${reason} (${n})`).join(', ');

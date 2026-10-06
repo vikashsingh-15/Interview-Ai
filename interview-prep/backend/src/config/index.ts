@@ -34,13 +34,25 @@ export const config = {
     customBaseURL: process.env.AI_BASE_URL || '',
     embeddingModel: process.env.AI_EMBEDDING_MODEL || '',
     timeout:60000, retryCount:1, dailyRequestLimit:40,
-    // Optional second provider. Used automatically when the primary hits a
-    // rate limit, quota, timeout or returns unusable output.
+    // Provider 1 is the primary; existing AI_FALLBACK_* is Provider 2 and
+    // AI_FALLBACK_2_* / AI_FALLBACK_3_* are Providers 3 and 4.
     fallback: {
       provider: process.env.AI_FALLBACK_PROVIDER || 'openrouter',
       apiKey: process.env.AI_FALLBACK_API_KEY || '',
       model: process.env.AI_FALLBACK_MODEL || '',
       customBaseURL: process.env.AI_FALLBACK_BASE_URL || '',
+    },
+    fallback2: {
+      provider: process.env.AI_FALLBACK_2_PROVIDER || '',
+      apiKey: process.env.AI_FALLBACK_2_API_KEY || '',
+      model: process.env.AI_FALLBACK_2_MODEL || '',
+      customBaseURL: process.env.AI_FALLBACK_2_BASE_URL || '',
+    },
+    fallback3: {
+      provider: process.env.AI_FALLBACK_3_PROVIDER || '',
+      apiKey: process.env.AI_FALLBACK_3_API_KEY || '',
+      model: process.env.AI_FALLBACK_3_MODEL || '',
+      customBaseURL: process.env.AI_FALLBACK_3_BASE_URL || '',
     },
   },
   upload: {

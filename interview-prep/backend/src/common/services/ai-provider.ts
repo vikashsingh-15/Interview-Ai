@@ -2,6 +2,12 @@ import OpenAI from 'openai';
 import config from '../../config';
 import logger from '../../config/logger';
 
+// Kept for compatibility with diagnostics/tests from the earlier two-provider
+// implementation. Provider order is now always configuration order.
+let lastServedProvider: string | null = null;
+export function setActiveProvider(provider: string | null): void { lastServedProvider = provider; }
+export function getActiveProvider(): string | null { return lastServedProvider; }
+
 export interface AIProviderCandidate {
   name: string;
   apiKey: string;
@@ -17,21 +23,9 @@ const endpoints:Record<string,string> = {
   tokenrouter:'https://api.tokenrouter.com/v1',
 };
 
-// Cache the last serving provider when a fallback actually took over, so the
-// primary (e.g. an exhausted free-tier quota) is not retried on every request.
-let activeOverride: string | null = null;
-
-export function setActiveProvider(provider: string | null): void {
-  activeOverride = provider;
-}
-
-export function getActiveProvider(): string | null {
-  return activeOverride;
-}
-
-function providerBaseURL(provider: string):string {
+function providerBaseURL(provider: string, customBaseURL = ''):string {
   if(provider === 'custom') {
-    const url=new URL(provider === config.ai.provider ? config.ai.customBaseURL : config.ai.fallback.customBaseURL);
+    const url=new URL(customBaseURL);
     if(url.protocol !== 'https:' || url.username || url.password) throw new Error('Custom AI_BASE_URL must be HTTPS without credentials');
     return url.toString();
   }
@@ -41,7 +35,7 @@ function providerBaseURL(provider: string):string {
 }
 
 export function aiBaseURL():string {
-  return providerBaseURL(config.ai.provider);
+  return providerBaseURL(config.ai.provider, config.ai.customBaseURL);
 }
 
 export function hasAI():boolean { return Boolean(config.ai.apiKey && config.ai.model); }
@@ -57,6 +51,14 @@ export function hasFallbackAI():boolean {
       config.ai.fallback.model !== config.ai.model ||
       (config.ai.fallback.provider === 'custom' && config.ai.fallback.customBaseURL !== config.ai.customBaseURL));
 }
+
+type ProviderConfig = { provider:string; apiKey:string; model:string; customBaseURL:string };
+const providerConfigs = ():ProviderConfig[] => [
+  config.ai,
+  config.ai.fallback,
+  config.ai.fallback2,
+  config.ai.fallback3,
+];
 
 export function createAIClient(provider?:string):OpenAI {
   const name = provider ?? config.ai.provider;
@@ -77,17 +79,17 @@ export function createAIClient(provider?:string):OpenAI {
  * primary is not re-attempted on every call.
  */
 export function aiProviderCandidates():AIProviderCandidate[] {
-  const primary:AIProviderCandidate = {
-    name: config.ai.provider, apiKey: config.ai.apiKey, model: config.ai.model,
-    baseURL: providerBaseURL(config.ai.provider),
-  };
-  if(!hasFallbackAI()) return hasAI() ? [primary] : [];
-  const fallback:AIProviderCandidate = {
-    name: config.ai.fallback.provider, apiKey: config.ai.fallback.apiKey, model: config.ai.fallback.model,
-    baseURL: providerBaseURL(config.ai.fallback.provider),
-  };
-  if(!hasAI()) return [fallback];
-  return activeOverride && activeOverride !== config.ai.provider ? [fallback, primary] : [primary, fallback];
+  const candidates:AIProviderCandidate[] = [];
+  for (const item of providerConfigs()) {
+    if (!item.apiKey && !item.model) continue;
+    if (!item.apiKey && !item.model && item.provider) continue;
+    if (!item.apiKey && item.provider === config.ai.provider) continue;
+    if (!item.apiKey || !item.model || !item.provider) throw new Error(`Configure provider ${item.provider || 'entry'} with provider, API key, and model`);
+    const candidate = { name:item.provider, apiKey:item.apiKey, model:item.model, baseURL:providerBaseURL(item.provider, item.customBaseURL) };
+    if (candidates.some(c => c.name === candidate.name && c.model === candidate.model)) continue;
+    candidates.push(candidate);
+  }
+  return candidates;
 }
 
 /**
@@ -107,16 +109,26 @@ export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCa
   let lastError:unknown;
   for(let i=0;i<candidates.length;i++) {
     const candidate = candidates[i];
+    const attemptStarted = Date.now();
     try {
+      logger.info('[AI_REQUEST] provider attempt', { provider: candidate.name, model: candidate.model, attempt: `${i + 1}/${candidates.length}` });
       const client = new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,timeout:config.ai.timeout,maxRetries:config.ai.retryCount});
       const result = await fn(client, candidate);
-      if(candidate.name !== config.ai.provider) setActiveProvider(candidate.name);
+      if (candidate.name !== config.ai.provider) setActiveProvider(candidate.name);
+      logger.info('[AI_SUCCESS] provider attempt', { provider: candidate.name, model: candidate.model, attempt: `${i + 1}/${candidates.length}`, durationMs: Date.now() - attemptStarted });
       return result;
     } catch(error) {
       lastError = error;
+      const providerError = error as any;
+      logger.warn('[AI_FAILURE] provider attempt', { provider: candidate.name, model: candidate.model,
+        attempt: `${i + 1}/${candidates.length}`, status: providerError?.status, code: providerError?.code,
+        error: providerError instanceof Error ? providerError.message : String(providerError),
+        timeout: providerError?.name === 'APIConnectionTimeoutError' || /timeout/i.test(String(providerError?.message || '')),
+        rateLimited: providerError?.status === 429, durationMs: Date.now() - attemptStarted });
       if(i < candidates.length - 1) {
-        logger.warn('AI provider failed; trying next provider', {
+        logger.warn('[AI_FALLBACK] AI provider failed; trying next provider', {
           failedProvider: candidate.name, failedModel: candidate.model,
+          attempt: `${i + 1}/${candidates.length}`,
           error: error instanceof Error ? error.message : String(error),
           nextProvider: candidates[i + 1].name,
         });

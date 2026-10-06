@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import mongoose, { Schema } from 'mongoose';
+import logger from '../../config/logger';
+
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, NotFoundError } from '../../common/filters/error-filter';
 import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
@@ -29,10 +31,12 @@ router.post('/:sessionId/:mappingId', authenticate, asyncHandler(async(req:Authe
       ['too_easy','too_hard','not_relevant','duplicate','incorrect'].includes(data.kind) ? { difficultyFeedback:data.kind } : {}) },
   },{ upsert:true,new:true });
   if (data.kind === 'skipped') { mapped.status='skipped'; await mapped.save(); }
-  if (['duplicate','incorrect'].includes(data.kind)) await Question.updateOne({ _id:question._id },{ qualityStatus:'flagged' });
-  if (['failed','need_revision','too_hard'].includes(data.kind)) {
+  if (['duplicate','incorrect'].includes(data.kind)) await Question.updateOne({ _id:question._id },{ qualityStatus:'flagged' });    if (['failed','need_revision','too_hard'].includes(data.kind)) {
     try { await (Revision as any).createRevision(new mongoose.Types.ObjectId(req.user!.id),history,question); }
-    catch(error:any) { if (error.code !== 11000) throw error; }
+    catch(error:any) {
+      if (error.code !== 11000) throw error;
+      logger.debug('Duplicate revision ignored', { module: 'feedback', collection: 'revisions' });
+    }
   }
   res.json({ success:true,message:'Feedback saved. Future planning will use it.' });
 }));

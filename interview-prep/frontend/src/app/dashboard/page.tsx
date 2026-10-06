@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Progress } from '@/components/ui/Progress';
-import api from '@/lib/api';
+import api, { logQuestionGenerationError } from '@/lib/api';
 import { Session, Analytics } from '@/types';
 import { formatDate, formatTime, calculateProgress, cn, truncate } from '@/lib/utils';
 import Link from 'next/link';

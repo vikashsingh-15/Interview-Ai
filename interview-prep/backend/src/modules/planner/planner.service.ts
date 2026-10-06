@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import logger from '../../config/logger';
 import { NotFoundError, ValidationError } from '../../common/filters/error-filter';
 import PlannerTask from './planner-task.model';
 
@@ -78,6 +79,7 @@ export const plannerService = {
       );
     } catch (error: any) {
       if (error?.code === 11000) {
+        logger.debug('Duplicate planner task ignored', { module: 'planner', collection: 'plannerTasks' });
         return PlannerTask.findOne({ userId: oid(userId), carriedFrom: source._id, year, month, week });
       }
       throw error;

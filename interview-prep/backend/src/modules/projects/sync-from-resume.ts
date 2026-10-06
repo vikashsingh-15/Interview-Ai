@@ -1,13 +1,19 @@
 import mongoose from 'mongoose';
 import logger from '../../config/logger';
+import { runJob } from '../../common/logging/job';
 import Project from './project.model';
 
 /**
  * Projects confirmed during resume review become first-class Project records
  * that the projects page and mock interviews use. Idempotent: existing records
  * are updated in place, de-confirmed ones are hidden, never duplicated.
+ * Wrapped in runJob so the sync job's lifecycle is visible in production.
  */
 export async function syncProjectsFromResume(userId: string, resumeProfile: any): Promise<number> {
+  return runJob('project-sync', { userId }, () => syncProjectsFromResumeInner(userId, resumeProfile));
+}
+
+async function syncProjectsFromResumeInner(userId: string, resumeProfile: any): Promise<number> {
   // Same criteria as interview profile generation: confirmed and not removed.
   const confirmed = (resumeProfile?.projects || []).filter(
     (p: any) => p && p.isConfirmed && !p.isRemoved &&

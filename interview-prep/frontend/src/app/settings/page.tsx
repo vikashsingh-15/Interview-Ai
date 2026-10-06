@@ -5,7 +5,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import api, { ApiResponse } from '@/lib/api';
+import api, { ApiResponse, logQuestionGenerationError } from '@/lib/api';
 import { UserPreferences } from '@/types';
 import { ResumeManager } from '@/components/resume/ResumeManager';
 import { useTheme, ThemeMode } from '@/components/providers/ThemeProvider';

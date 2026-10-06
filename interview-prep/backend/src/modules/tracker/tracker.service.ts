@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import logger from '../../config/logger';
 import { NotFoundError, ValidationError } from '../../common/filters/error-filter';
 import DailyRecord from '../calendar/daily-record.model';
 import DailyTrackerEntry from './daily-tracker-entry.model';
@@ -43,6 +44,7 @@ async function ensureDefaultTasks(userId: string) {
     } catch (error: any) {
       // A simultaneous first request can win the unique user/systemKey index.
       if (error?.code !== 11000) throw error;
+      logger.debug('Duplicate tracker entry ignored', { module: 'tracker', collection: 'trackerTasks' });
     }
   }));
 }

@@ -11,6 +11,7 @@ import { ResumeVersion } from './resume.model';
 import ResumeProfile, { IResumeProfile } from './resume-profile.model';
 import InterviewProfile from '../profile/interview-profile.model';
 import { syncProjectsFromResume } from '../projects/sync-from-resume';
+import { runJob } from '../../common/logging/job';
 import Project from '../projects/project.model';
 import { BadRequestError, NotFoundError, InternalError } from '../../common/filters/error-filter';
 
@@ -225,7 +226,10 @@ export const resumeService = {
       }
 
       // Parse resume content (simulated - in production use AI)
-      const parsedData = await parseResumeBuffer(await resumeStorage.get(resumeVersion.storageKey, resumeVersion.storageProvider || 'local'), resumeVersion.mimeType, String(resumeProfile.userId));
+      const resumeBuffer = await resumeStorage.get(resumeVersion.storageKey, resumeVersion.storageProvider || 'local');
+      const parsedData = await runJob('resume-parse', {
+        userId: String(resumeProfile.userId), resumeVersionId: String(resumeVersion._id),
+      }, () => parseResumeBuffer(resumeBuffer, resumeVersion.mimeType, String(resumeProfile.userId)));
 
       // Update resume profile with parsed data
       resumeProfile.fullName = parsedData.fullName;

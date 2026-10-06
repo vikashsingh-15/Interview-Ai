@@ -3,13 +3,13 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import morgan from 'morgan';
 
 import config from './config';
 import { rateLimiter } from './common/middleware/rate-limit';
-import { randomUUID } from 'crypto';
+import { requestIdMiddleware } from './common/middleware/request-id';
+import { runWithRequestContext } from './common/logging/request-context';
+import { safeDbTarget, redactSecrets } from './common/logging/redact';
 import { validateProductionConfig } from './config/validate';
-import onboardingRoutes from './modules/profile/onboarding.routes';
 import logger from './config/logger';
 import { errorHandler } from './common/filters/error-filter';
 import { notFoundHandler } from './common/filters/not-found-filter';
@@ -19,6 +19,7 @@ import resumeRoutes from './modules/resume/routes';
 import { ensureMultiResumeIndexes } from './modules/resume/resume-indexes';
 import { seedAllCodingProblems } from './scripts/seed-coding-questions';
 import { seedSystemDesignQuestions } from './scripts/seed-system-design-questions';
+import onboardingRoutes from './modules/profile/onboarding.routes';
 import profileRoutes from './modules/profile/routes';
 import skillGraphRoutes from './modules/skill-graph/routes';
 import questionRoutes from './modules/questions/routes';
@@ -67,12 +68,27 @@ app.use((req, res, next) => {
   next();
 });
 
+// Correlation context + request ID. Accept an inbound X-Request-ID (so a
+// frontend failure and the corresponding Render log line share the same id),
+// otherwise generate one. Wrap the API stack in AsyncLocalStorage so every
+// log line in this request carries requestId/method/route/userId. This runs
+// before body parsing so even a malformed-JSON rejection is correlated.
+app.use((req, res, next) => {
+  requestIdMiddleware(req as any, res, () => {
+    runWithRequestContext({
+      requestId: (req as any).requestId,
+      method: req.method,
+      route: req.path,
+    }, next);
+  });
+});
+
 // CORS
 app.use(cors({
   origin: config.urls.frontend,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
 }));
 
 // Body parsing
@@ -84,9 +100,6 @@ app.use(cookieParser());
 
 // Enforce origin on browser mutations (including login) to prevent CSRF.
 app.use((req, res, next) => {
-  const requestId = randomUUID();
-  (req as any).requestId = requestId;
-  res.setHeader('X-Request-ID', requestId);
   if (!['GET','HEAD','OPTIONS'].includes(req.method)) {
     const origin = req.get('origin');
     if (origin && origin !== config.urls.frontend || !origin && req.get('sec-fetch-site') === 'cross-site') {
@@ -97,9 +110,32 @@ app.use((req, res, next) => {
 });
 app.use('/api', (req, res, next) => req.path === '/health' ? next() : rateLimiter(req, res, next));
 
-// Never log OAuth codes, states, verification/reset tokens or query strings.
-morgan.token('safe-path', req => (req as express.Request).path);
-if (!config.isTest) app.use(morgan(':method :safe-path :status :response-time ms'));
+// One leveled per-request completion log (INFO for 2xx, WARN for 4xx, ERROR for
+// 5xx) with correlation. Never logs OAuth codes, states, verification/reset
+// tokens or query strings; only the path is recorded.
+if (!config.isTest) {
+  app.use((req, res, next) => {
+    const start = Date.now();
+    // Capture routing-independent values now: inside a matched route req.url is
+    // rewritten to the mount-relative sub-path (/list), so reading it at
+    // response time would hide which API was called.
+    const method = req.method;
+    const safePath = (req.originalUrl || req.path).split('?')[0];
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const status = res.statusCode;
+      const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+      logger[level](`${method} ${safePath} ${status} ${duration}ms`,
+        {
+          module: 'http', route: safePath, method, status, duration,
+          requestId: (req as any).requestId || undefined,
+          // undefined lets the request-scoped context supply the authenticated user.
+          userId: (req as any).userId || undefined,
+        });
+    });
+    next();
+  });
+}
 
 // Health check
 app.get(['/health','/api/health'], (req, res) => {
@@ -111,6 +147,13 @@ app.get(['/health','/api/health'], (req, res) => {
     environment: config.nodeEnv,
   });
 });
+
+// Mongoose connection events — visible in Render without exposing credentials.
+const dbHost = safeDbTarget(config.database.uri);
+mongoose.connection.on('connected', () => logger.info('MongoDB connected', { module: 'db', host: dbHost }));
+mongoose.connection.on('disconnected', () => logger.warn('MongoDB disconnected', { module: 'db', host: dbHost }));
+mongoose.connection.on('reconnected', () => logger.info('MongoDB reconnected', { module: 'db', host: dbHost }));
+mongoose.connection.on('error', (err) => logger.error('MongoDB connection error', { module: 'db', host: dbHost, error: err instanceof Error ? err.message : String(err) }));
 
 // API routes
 app.use('/api/auth', authRoutes);
@@ -154,23 +197,48 @@ export async function startServer() {
     } catch (error) {
       // The app can still serve other practice modes; keep startup resilient,
       // while making the failed repair visible to operators.
-      logger.warn('Could not initialize curated coding bank', { error });
+      logger.error('Could not initialize curated coding bank', {
+        module: 'job', job: 'seed-coding-bank',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
     try {
       const seeded = await seedSystemDesignQuestions();
       logger.info('Curated system-design bank initialized', seeded);
     } catch (error) {
-      logger.warn('Could not initialize curated system-design bank', { error });
+      logger.error('Could not initialize curated system-design bank', {
+        module: 'job', job: 'seed-system-design-bank',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
 
-    logger.info('Connected to MongoDB');
+    // Optional operational debug: log every MongoDB operation with redaction of
+    // secrets. Off by default — only enable temporarily for debugging a specific
+    // issue, never in steady-state production.
+    if (process.env.LOG_MONGO_QUERIES === 'true') {
+      mongoose.set('debug', (...args) => {
+        logger.debug('MongoDB op', { module: 'db', op: typeof args[0] === 'string' ? args[0] : undefined, args: args.map(redactSecrets) });
+      });
+      logger.info('MongoDB query debug logging enabled', { module: 'db', logMongoQueries: true });
+    }
 
     // Start server
     const server = app.listen(config.port, config.host, () => {
       logger.info(`Server running at http://${config.host}:${config.port}`);
       logger.info(`Environment: ${config.nodeEnv}`);
       logger.info(`API available at http://${config.host}:${config.port}/api`);
+    });
 
+    // Server-level errors (e.g. EADDRINUSE, permissions) are not caught by the
+    // HTTP error middleware; surface them in Render rather than silently exiting.
+    server.on('error', (err) => {
+      logger.error('HTTP server error', {
+        module: 'server', port: config.port, host: config.host,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
     });
 
     // Graceful shutdown
@@ -192,7 +260,7 @@ export async function startServer() {
 
       // Force shutdown after 30 seconds
       setTimeout(() => {
-        logger.error('Forced shutdown after timeout');
+        logger.error('Forced shutdown after timeout', { module: 'process', signal: signal });
         process.exit(1);
       }, 30000);
     };
@@ -200,10 +268,43 @@ export async function startServer() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
 
+    // Process-level crash logging. These are not caught by the Express error
+    // middleware, so they must be logged explicitly. unhandledRejection that
+    // reaches the top of the event loop still crashes Node, so log + exit.
+    process.on('uncaughtException', (err) => {
+      logger.error('Uncaught exception — shutting down', {
+        module: 'process', error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      if (mongoose.connection.readyState !== 0) {
+        mongoose.disconnect().catch((error) => {
+          logger.debug('MongoDB disconnect failed during crash shutdown', {
+            module: 'process', error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      process.exit(1);
+    });
+    process.on('unhandledRejection', (reason) => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      logger.error('Unhandled promise rejection — shutting down', {
+        module: 'process', error: message,
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+      if (mongoose.connection.readyState !== 0) {
+        mongoose.disconnect().catch((error) => {
+          logger.debug('MongoDB disconnect failed during crash shutdown', {
+            module: 'process', error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      process.exit(1);
+    });
   } catch (err) {
     logger.error('Failed to start server', {
-      error: err,
-      message: err instanceof Error ? err.message : 'Unknown error',
+      module: 'server',
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
     });
     process.exit(1);
   }
