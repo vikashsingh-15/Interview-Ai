@@ -1,6 +1,10 @@
 # JobPrep Android
 
-JobPrep is a native Android 14+ application (minSdk 34, targetSdk 35). Its Activity supplies bottom navigation, Android back and exit handling, PDF/DOCX system document selection, safe area and keyboard handling, offline retry, lifecycle state, and browser handling for external links. The existing HTTPS Vercel frontend runs as the main WebView content and continues to use its same-origin /api proxy, Express backend, MongoDB data, Google account, and AI services. The current Next.js frontend has server-rendered dynamic routes and a server API route, so its build output cannot be copied directly into an APK.
+JobPrep is a native Android 14+ application (minSdk 34, targetSdk 35). Its Activity supplies bottom navigation, Android back and exit handling, PDF/DOCX system document selection, safe area and keyboard handling, offline retry, lifecycle state, and browser handling for external links. It includes resizable Dashboard, Practice, and dynamic Today’s Question home-screen widgets. The existing HTTPS Vercel frontend runs as the main WebView content and continues to use its same-origin /api proxy, Express backend, MongoDB data, Google account, and AI services. The current Next.js frontend has server-rendered dynamic routes and a server API route, so its build output cannot be copied directly into an APK.
+
+## Home-screen widgets
+
+Add JobPrep Dashboard, JobPrep Practice, or Today’s Question from your Android launcher’s Widgets picker. All three resize horizontally and vertically. Dashboard opens `/dashboard`; Practice opens `/sessions/today`. Today’s Question loads the signed-in user’s current session, lets you browse questions with Previous and Next, and opens the selected question in the app. It refreshes when the app resumes and has a refresh control. Install app version 1.2.0 or newer to add the question widget.
 
 ## Mobile Google sign-in
 

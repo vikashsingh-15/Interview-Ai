@@ -19,5 +19,17 @@
                 <data android:scheme="jobprep" android:host="auth" />
             </intent-filter>
         </activity>
+        <receiver android:name=".DashboardWidgetProvider" android:exported="true" android:label="JobPrep Dashboard">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/dashboard_widget_info" />
+        </receiver>
+        <receiver android:name=".PracticeWidgetProvider" android:exported="true" android:label="JobPrep Practice">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/practice_widget_info" />
+        </receiver>
+        <receiver android:name=".QuestionOfDayWidgetProvider" android:exported="true" android:label="Today’s Question">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/question_widget_info" />
+        </receiver>
     </application>
 </manifest>

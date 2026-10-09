@@ -35,6 +35,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 
 public final class MainActivity extends Activity {
+    public static final String EXTRA_WIDGET_DESTINATION = "widget_destination";
+    public static final String EXTRA_WIDGET_QUESTION_ID = "widget_question_id";
     private static final int PICK_DOCUMENT = 421;
     private static final String VERIFIER_KEY = "oauth_verifier";
     private static final String VERIFIER_TIME_KEY = "oauth_verifier_time";
@@ -61,7 +63,10 @@ public final class MainActivity extends Activity {
             @Override public void onLost(Network network) { runOnUiThread(() -> onNetworkChanged()); }
         };
         connectivity.registerDefaultNetworkCallback(networkCallback);
-        if (state == null || webView.restoreState(state) == null) webView.loadUrl(BuildConfig.WEB_ORIGIN + "/dashboard");
+        if (state == null || webView.restoreState(state) == null) {
+            String destination = widgetDestination(getIntent());
+            webView.loadUrl(BuildConfig.WEB_ORIGIN + (destination == null ? "/dashboard" : destination));
+        }
         handleDeepLink(getIntent());
         onNetworkChanged();
     }
@@ -213,7 +218,26 @@ public final class MainActivity extends Activity {
         } catch (Exception e) { Toast.makeText(this, "Could not start Google sign-in", Toast.LENGTH_LONG).show(); }
     }
 
-    @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleDeepLink(intent); }
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent.getData() != null) {
+            handleDeepLink(intent);
+            return;
+        }
+        String destination = widgetDestination(intent);
+        if (destination != null) confirmIfAnswerPresent(() -> webView.loadUrl(BuildConfig.WEB_ORIGIN + destination));
+    }
+
+    private String widgetDestination(Intent intent) {
+        if (intent == null) return null;
+        String questionId = intent.getStringExtra(EXTRA_WIDGET_QUESTION_ID);
+        if (questionId != null && questionId.matches("[A-Fa-f0-9]{24}"))
+            return "/sessions/today?questionId=" + Uri.encode(questionId);
+        String destination = intent.getStringExtra(EXTRA_WIDGET_DESTINATION);
+        if ("/dashboard".equals(destination) || "/sessions/today".equals(destination)) return destination;
+        return null;
+    }
 
     private void handleDeepLink(Intent intent) {
         Uri data = intent == null ? null : intent.getData();
@@ -275,7 +299,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) { webView.saveState(state); super.onSaveInstanceState(state); }
     @Override protected void onPause() { CookieManager.getInstance().flush(); webView.onPause(); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); webView.onResume(); }
+    @Override protected void onResume() { super.onResume(); webView.onResume(); QuestionOfDayWidgetProvider.refreshAll(this); }
     @Override protected void onDestroy() {
         if (networkCallback != null) connectivity.unregisterNetworkCallback(networkCallback);
         if (pendingFile != null) pendingFile.onReceiveValue(null);

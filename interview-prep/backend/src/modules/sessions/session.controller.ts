@@ -93,6 +93,7 @@ router.get(
           subtopic: section.subtopic,
           questions: section.questions?.map((q: any) => ({
             id: q._id,
+            order: q.order,
             question: q.questionSnapshot?.question,
             topic: q.questionSnapshot?.topic,
             subtopic: q.questionSnapshot?.subtopic,
