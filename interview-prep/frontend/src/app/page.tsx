@@ -1,7 +1,23 @@
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { LoginForm } from '@/components/auth/LoginForm';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function HomePage() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) router.replace('/dashboard');
+  }, [isAuthenticated, isLoading, router]);
+
+  if (isLoading || isAuthenticated) {
+    return <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-brand-background" role="status" aria-label="Checking your sign-in"><div className="h-10 w-10 animate-spin rounded-full border-b-2 border-brand-secondary" /></main>;
+  }
+
   return <main className="min-h-[calc(100vh-4rem)] bg-brand-background"><section className="relative flex min-h-[calc(100vh-4rem)] items-center overflow-hidden px-4 py-10 sm:px-6 lg:px-8"><div className="absolute inset-0 bg-gradient-to-br from-brand-secondary/10 via-transparent to-brand-primary/10" aria-hidden="true" /><div className="relative mx-auto grid w-full max-w-5xl items-center gap-8 lg:grid-cols-[1.15fr_0.85fr]"><div><div className="mb-5 inline-flex rounded-full bg-brand-secondary/10 px-3 py-1.5 text-sm font-medium text-brand-secondary">AI-powered interview preparation</div><h1 className="max-w-2xl text-4xl font-bold tracking-tight text-brand-primary sm:text-6xl">Prepare smarter for your next SDE interview.</h1><p className="mt-5 max-w-xl text-lg leading-8 text-brand-textSecondary">Resume-based daily practice for coding, system design, technical, and project interviews.</p><div className="mt-7 flex flex-wrap gap-3"><Link href="/dashboard"><Button size="lg">Go to Dashboard</Button></Link><Link href="/login"><Button size="lg" variant="secondary">Sign in</Button></Link></div><div className="mt-8 flex flex-wrap gap-2 text-sm text-brand-textSecondary">{['Resume-based questions', 'Adaptive practice', 'Daily sessions'].map((item) => <span key={item} className="rounded-full border border-brand-border bg-brand-surface px-3 py-1.5">{item}</span>)}</div></div><div className="rounded-2xl border border-brand-border bg-brand-surface p-6 shadow-lg sm:p-8"><h2 className="text-xl font-semibold text-brand-primary">Start preparing</h2><p className="mt-2 text-sm leading-6 text-brand-textSecondary">Sign in with Google to create or continue your interview workspace.</p><div className="mt-6"><LoginForm /></div><p className="mt-5 text-center text-xs text-brand-textSecondary">No credit card required.</p></div></div></section></main>;
 }

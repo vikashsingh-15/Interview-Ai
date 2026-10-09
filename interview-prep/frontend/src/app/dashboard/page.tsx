@@ -20,6 +20,10 @@ export default function DashboardPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [regenNote, setRegenNote] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
@@ -27,9 +31,10 @@ export default function DashboardPage() {
   const togglePanel = (panel: keyof typeof dashboardPanels) => setDashboardPanels((current) => ({ ...current, [panel]: !current[panel] }));
 
   const regenerateToday = async () => {
-    if (regenerating) return;
+    if (regenerating || sessionLoading) return;
     setRegenerating(true);
     setRegenNote(null);
+    setSessionError(null);
     try {
       const res = await api.post('/sessions/today/regenerate');
       const sessionRes = await api.get('/sessions/today');
@@ -54,29 +59,48 @@ export default function DashboardPage() {
       return;
     }
 
+    let cancelled = false;
     const fetchData = async () => {
       try {
         const profileRes = await api.get('/profile/onboarding');
+        if (cancelled) return;
         const { profile, resume } = profileRes.data.data;
         const activeResumeProfileId = resume?.profile?._id;
         const profileResumeChanged = activeResumeProfileId && profile?.resumeProfileId
           && String(activeResumeProfileId) !== String(profile.resumeProfileId);
-        if (!profile?.onboardingCompleted || profileResumeChanged) { router.replace('/onboarding'); return; }
-        const [sessionRes, analyticsRes] = await Promise.all([
-          api.get('/sessions/today'),
-          api.get('/analytics/overview'),
-        ]);
-        setSession(sessionRes.data.data);
-        setAnalytics(analyticsRes.data.data);
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error);
-      } finally {
+        if (!profile?.onboardingCompleted || profileResumeChanged) {
+          router.replace('/onboarding');
+          return;
+        }
+
+        // The first session of the day may require AI generation. Show the dashboard
+        // while that request runs so the tracker and other controls stay available.
         setIsLoading(false);
+        api.get('/analytics/overview')
+          .then((response) => { if (!cancelled) setAnalytics(response.data.data); })
+          .catch((error) => { console.error('Failed to fetch dashboard analytics:', error); })
+          .finally(() => { if (!cancelled) setAnalyticsLoading(false); });
+        api.get('/sessions/today')
+          .then((response) => { if (!cancelled) setSession(response.data.data); })
+          .catch((error) => {
+            console.error("Failed to fetch today's session:", error);
+            if (!cancelled) setSessionError("Today's questions could not be loaded. Reload the page to try again.");
+          })
+          .finally(() => { if (!cancelled) setSessionLoading(false); });
+      } catch (error) {
+        console.error('Failed to check dashboard profile:', error);
+        if (!cancelled) {
+          setDashboardError('Your dashboard could not be loaded. Reload the page to try again.');
+          setSessionLoading(false);
+          setAnalyticsLoading(false);
+          setIsLoading(false);
+        }
       }
     };
 
     fetchData();
-  }, [isAuthenticated, user, authLoading, router]);
+    return () => { cancelled = true; };
+  }, [isAuthenticated, authLoading, router]);
 
   if (isLoading) {
     return (
@@ -99,7 +123,7 @@ export default function DashboardPage() {
               <p className="mt-1 text-brand-textSecondary">
                 {session?.userDayNumber
                   ? `Day ${session.userDayNumber} of your interview preparation`
-                  : 'Get started with your first session'}
+                  : sessionLoading ? 'Preparing today’s session…' : 'Get started with your first session'}
               </p>
             </div>
 
@@ -107,7 +131,7 @@ export default function DashboardPage() {
               <Button
                 variant="secondary"
                 onClick={regenerateToday}
-                disabled={regenerating}
+                disabled={regenerating || sessionLoading}
                 title="Replace today's unanswered questions with a fresh set built from your current settings. Answered and skipped questions are kept."
               >
                 {regenerating ? 'Generating fresh set…' : 'Generate fresh questions'}
@@ -129,6 +153,7 @@ export default function DashboardPage() {
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <p className="mb-6"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link></p>
+        {dashboardError && <p role="alert" className="mb-6 text-sm text-red-600">{dashboardError}</p>}
         {/* Stats Grid */}
         <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
           <Card>
@@ -142,7 +167,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-brand-textSecondary">Today&apos;s Progress</p>
                   <p className="text-2xl font-bold text-brand-primary">
-                    {session?.completedQuestions ?? 0} / {session?.totalQuestions ?? 0} reviewed
+                    {sessionLoading ? 'Preparing…' : `${session?.completedQuestions ?? 0} / ${session?.totalQuestions ?? 0} reviewed`}
                   </p>
                 </div>
               </div>
@@ -154,7 +179,7 @@ export default function DashboardPage() {
               <div className="mt-4 flex items-center justify-between gap-2">
                 <button
                   onClick={regenerateToday}
-                  disabled={regenerating}
+                  disabled={regenerating || sessionLoading}
                   title="Replace unanswered questions with a fresh set from your current settings. Answered and skipped questions stay."
                   className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg border border-brand-border text-brand-text hover:bg-brand-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -181,7 +206,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-brand-textSecondary">Current Streak</p>
                   <p className="text-2xl font-bold text-brand-primary">
-                    {analytics?.currentStreak || 0} days
+                    {analyticsLoading ? 'Loading…' : `${analytics?.currentStreak || 0} days`}
                   </p>
                 </div>
               </div>
@@ -199,7 +224,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-brand-textSecondary">Average Score</p>
                   <p className="text-2xl font-bold text-brand-primary">
-                    {(analytics?.averageScore || 0) * 100}%</p>
+                    {analyticsLoading ? 'Loading…' : `${(analytics?.averageScore || 0) * 100}%`}</p>
                 </div>
               </div>
             </CardContent>
@@ -216,7 +241,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-sm text-brand-textSecondary">Due for Revision</p>
                   <p className="text-2xl font-bold text-brand-primary">
-                    {analytics?.revisionProgress?.dueRevisions || 0}
+                    {analyticsLoading ? 'Loading…' : (analytics?.revisionProgress?.dueRevisions || 0)}
                   </p>
                 </div>
               </div>
@@ -231,6 +256,8 @@ export default function DashboardPage() {
           </button>
         </div>
         <div hidden={!dashboardPanels.today} className="min-w-0">
+        {sessionLoading && <p role="status" className="mb-6 text-sm text-brand-textSecondary">Preparing today’s questions. Your tracker and planner are ready below.</p>}
+        {sessionError && <p role="alert" className="mb-6 text-sm text-red-600">{sessionError}</p>}
         {/* Session Overview */}
         {session && (
           <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
