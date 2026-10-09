@@ -1,0 +1,13 @@
+/.gradle/
+/build/
+/app/build/
+/local.properties
+/signing.properties
+/*.jks
+/*.keystore
+/.local-signing/
+/.gradle-user-home/
+/.gradle-native/
+/.android-user-home/
+/.android-sdk/
+/.android/

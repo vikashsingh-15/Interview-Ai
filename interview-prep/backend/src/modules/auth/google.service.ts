@@ -7,18 +7,18 @@ import { createSession, hashToken } from '../../common/middleware/auth';
 import { ConflictError, UnauthorizedError } from '../../common/filters/error-filter';
 
 const stateSchema = new Schema({ stateHash: { type: String, unique: true }, verifier: String,
-  nonce: String, linkUserId: String, expiresAt: Date });
+  nonce: String, linkUserId: String, mobileChallenge: String, expiresAt: Date });
 stateSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 const OAuthState = mongoose.model('OAuthState', stateSchema);
 const oauthClient = () => new OAuth2Client(config.google.clientId, config.google.clientSecret, config.google.callbackUrl);
 export const googleAuth = {
   configured() { return Boolean(config.google.clientId && config.google.clientSecret); },
-  async begin(linkUserId?: string) {
+  async begin(linkUserId?: string, mobileChallenge?: string) {
     if (!this.configured()) throw new ConflictError('Google login is not configured');
     const state = randomBytes(32).toString('base64url');
     const verifier = randomBytes(32).toString('base64url');
     const nonce = randomBytes(32).toString('base64url');
-    await OAuthState.create({ stateHash: hashToken(state), verifier, nonce, linkUserId,
+    await OAuthState.create({ stateHash: hashToken(state), verifier, nonce, linkUserId, mobileChallenge,
       expiresAt: new Date(Date.now() + 10 * 60000) });
     const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     Object.entries({ client_id: config.google.clientId, redirect_uri: config.google.callbackUrl,
@@ -54,7 +54,10 @@ export const googleAuth = {
         googleId: identity.sub, isEmailVerified: true });
     }
     if (user.isAccountDeleted) throw new UnauthorizedError('Account deleted');
+    // The system browser proves Google identity. The app receives its own session
+    // only after the one-time, PKCE-bound handoff is redeemed.
+    if (saved.mobileChallenge) return { userId: String(user._id), mobileChallenge: saved.mobileChallenge };
     const sessionToken = await createSession(String(user._id), userAgent);
-    return { sessionToken };
+    return { sessionToken, userId: String(user._id) };
   },
 };

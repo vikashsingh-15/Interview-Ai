@@ -13,5 +13,5 @@ export function LoginForm() {
       else if(!window.location.search)setMessage('Your account is created automatically on first Google sign-in.');
     }).catch(()=>setMessage('Cannot reach the API. Check BACKEND_API_URL and that the backend is running.'));
   },[]);
-  return <div className="space-y-4"><Button className="w-full" disabled={!ready} onClick={()=>window.location.assign('/api/auth/google')}>Continue with Google</Button><p role="status" className="text-sm text-gray-600">{message}</p></div>;
+  return <div className="space-y-4"><Button className="w-full" disabled={!ready} onClick={()=>{ const mobile=(window as typeof window & {JobPrepAndroid?:{startGoogleSignIn:()=>void}}).JobPrepAndroid; if(mobile) mobile.startGoogleSignIn(); else window.location.assign('/api/auth/google'); }}>Continue with Google</Button><p role="status" className="text-sm text-gray-600">{message}</p></div>;
 }

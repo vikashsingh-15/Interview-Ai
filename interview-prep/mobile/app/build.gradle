@@ -1,0 +1,46 @@
+plugins { id 'com.android.application' }
+
+import java.util.Properties
+
+def localProps = new Properties()
+def localFile = rootProject.file('local.properties')
+if (localFile.exists()) localFile.withInputStream { localProps.load(it) }
+def origin = (project.findProperty('jobprepOrigin') ?: localProps.getProperty('jobprepOrigin') ?: System.getenv('JOBPREP_WEB_ORIGIN'))?.toString()
+if (!origin) throw new GradleException('Set jobprepOrigin in mobile/local.properties or JOBPREP_WEB_ORIGIN to the HTTPS Vercel origin')
+def parsed = new URI(origin)
+if (parsed.scheme != 'https' || !parsed.host || parsed.rawUserInfo || parsed.path || parsed.rawQuery || parsed.rawFragment)
+    throw new GradleException('jobprepOrigin must be a plain HTTPS website origin')
+
+android {
+    namespace 'com.jobprep.mobile'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.jobprep.mobile'
+        minSdk 34
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+        buildConfigField 'String', 'WEB_ORIGIN', '"' + origin + '"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    signingConfigs {
+        release {
+            def signingFile = rootProject.file('signing.properties')
+            if (signingFile.exists()) {
+                def props = new Properties()
+                signingFile.withInputStream { props.load(it) }
+                storeFile rootProject.file(props.getProperty('storeFile'))
+                storePassword props.getProperty('storePassword')
+                keyAlias props.getProperty('keyAlias')
+                keyPassword props.getProperty('keyPassword')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (rootProject.file('signing.properties').exists()) signingConfig signingConfigs.release
+        }
+    }
+}
