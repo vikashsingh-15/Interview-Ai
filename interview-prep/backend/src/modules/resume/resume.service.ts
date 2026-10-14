@@ -426,6 +426,9 @@ export const resumeService = {
   async activateResume(userId: string, resumeId: string): Promise<any> {
     const resume = await Resume.findOne({ _id: resumeId, userId, isDeleted: false });
     if (!resume) throw new NotFoundError('Resume not found');
+    if (!resume.currentVersionId && resume.versions.length) {
+      resume.currentVersionId = resume.versions[resume.versions.length - 1];
+    }
     const changedActiveResume = !resume.isActive;
     // The partial unique index is the final race-safe guard. The normal path is
     // deliberately small so it also works on MongoDB deployments without transactions.
