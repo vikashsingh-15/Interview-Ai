@@ -8,6 +8,8 @@ import Link from 'next/link';
 const inputStyle = 'w-full rounded border border-gray-300 p-2 text-gray-900 bg-white';
 const buttonStyle = 'rounded bg-blue-700 text-white px-4 py-2 disabled:opacity-50';
 const list = (text:string) => text.split(',').map(s=>s.trim()).filter(Boolean);
+const hasSavedReview = (resume:any) => Boolean(resume?.userModified &&
+  ['skills','projects','experience'].some(kind => (resume[kind] || []).some((entry:any)=>entry.isConfirmed && !entry.isRemoved)));
 const staleDraft = (value:unknown) => typeof value === 'string' && (
   value.startsWith('No confirmed resume evidence is available') ||
   value.startsWith('Confirm at least one related project') ||
@@ -23,6 +25,7 @@ export default function OnboardingPage() {
   const [facts,setFacts] = useState<any>(null);
   const [savedResumes,setSavedResumes] = useState<any[]>([]);
   const [selectedResumeId,setSelectedResumeId] = useState('');
+  const [loadedResumeId,setLoadedResumeId] = useState('');
   const [reviewed,setReviewed] = useState(false);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState('');
@@ -54,10 +57,12 @@ export default function OnboardingPage() {
     ]);
     setSavedResumes(resumeResponse.data.data || []);
     const activeResume = (resumeResponse.data.data || []).find((resume:any)=>resume.isActive);
-    setSelectedResumeId((current)=>current || activeResume?.id || '');
+    setSelectedResumeId(activeResume?.id || '');
+    setLoadedResumeId(activeResume?.id || '');
     const resume = data.data.resumeProfile || data.data.resume?.profile;
     const profile = data.data.profile;
-    if (resume) { setFacts(resume); setReviewed(Boolean(resume.userModified)); setMonths(resume.totalExperienceMonths || 0); }
+    if (resume) { setFacts(resume); setReviewed(hasSavedReview(resume)); setMonths(resume.totalExperienceMonths || 0); }
+    else { setFacts(null); setReviewed(false); }
     applyInterviewProfile(profile);
     return Boolean(resume);
   }
@@ -129,12 +134,32 @@ export default function OnboardingPage() {
       const response = await api.post(`/resume/${selectedResumeId}/select-for-onboarding`);
       const extracted = response.data.data.resumeProfile;
       setFacts(extracted);
-      setReviewed(Boolean(extracted.userModified));
+      setLoadedResumeId(selectedResumeId);
+      const savedReview = hasSavedReview(extracted);
+      setReviewed(savedReview);
       setMonths(extracted.totalExperienceMonths || 0);
       applyInterviewProfile(response.data.data.interviewProfile);
       setSavedResumes(previous=>previous.map(resume=>({...resume,isActive:resume.id===selectedResumeId})));
-      setMessage('Resume ready. Confirm at least one skill, project, or experience, save your reviewed facts, then save your profile to generate questions.');
-      window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
+      setMessage(savedReview
+        ? 'Your saved, confirmed resume details are ready. Continue with them or edit them below.'
+        : 'This resume has no saved confirmations. Review its extracted facts once before generating questions.');
+      if (!savedReview) window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
+    });
+  }
+  async function startPractice() {
+    if (!reviewed || loadedResumeId !== selectedResumeId) return;
+    await act(async()=>{
+      const onboardingPayload = {
+        targetRole:role,targetLevel:level,actualExperienceMonths:months,
+        targetCompanies:list(companies),industries:list(industries),
+        focusTopics:list(focus),excludedTopics:list(avoid),
+        difficulty,dailyPlan:plan.length ? plan : undefined,
+        interviewDate:date?new Date(date+'T12:00:00Z').toISOString():undefined,
+      };
+      await api.post('/profile/onboarding',onboardingPayload);
+      setMessage('Profile and curriculum saved. Preparing your first session…');
+      await api.post('/sessions/generate');
+      router.push('/sessions/today');
     });
   }
   if (isLoading) return <p className="p-8">Loading…</p>;
@@ -151,6 +176,7 @@ export default function OnboardingPage() {
             <span>{resume.name}{resume.targetRole ? ` · ${resume.targetRole}` : ''}{resume.isActive ? ' · Active' : ''}</span></label>
         </div>)}
         <button type="button" className={buttonStyle} disabled={busy || !selectedResumeId} onClick={()=>void continueWithResume()}>{busy ? 'Loading resume…' : 'Select and continue'}</button>
+        {facts && reviewed && loadedResumeId===selectedResumeId && <button type="button" className={buttonStyle+' ml-2'} disabled={busy} onClick={()=>void startPractice()}>{busy ? 'Working…' : 'Continue with saved details'}</button>}
       </div>}
       <h3 className="font-medium">Or upload a new resume</h3>
       <p>Text-based PDF or DOCX. Uploading again creates a version; old versions are retained until you delete your resume.</p>
@@ -158,7 +184,7 @@ export default function OnboardingPage() {
         onChange={e=>{const file=e.target.files?.[0];if(file)void upload(file);}} />
       <p className="text-sm text-gray-600">Resume facts are suggestions until you confirm them. After saving confirmed facts, you can generate editable answer drafts grounded in your projects and experience.</p>
     </section>
-    {facts && <section id="resume-facts-review" className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">2. Review extracted facts</h2>
+    {facts && loadedResumeId===selectedResumeId && <section id="resume-facts-review" className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">2. Review extracted facts</h2>
       <label className="block">Current role<input className={inputStyle} value={facts.currentRole || ''}
         onChange={e=>{setReviewed(false);setFacts({...facts,currentRole:e.target.value});}} /></label>
       <h3 className="font-semibold">Skills</h3>
@@ -213,7 +239,7 @@ export default function OnboardingPage() {
       </button>
       <p className="text-xs text-gray-600">Generated answers are drafts only. Verify that every statement is true before saving them as reviewed facts.</p>
     </section>}
-    {facts && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">3. Goals and daily plan</h2>
+    {facts && loadedResumeId===selectedResumeId && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">3. Goals and daily plan</h2>
       <label className="block">Target role (optional; blank uses your reviewed current role)<input className={inputStyle} value={role} onChange={e=>setRole(e.target.value)} /></label>
       <label className="block">Target interview level (your own wording)<input className={inputStyle} value={level} placeholder="e.g. Senior, Graduate, Manager" onChange={e=>setLevel(e.target.value)} /></label>
       <label className="block">Actual experience in months<input type="number" min="0" max="1200" className={inputStyle} value={months} onChange={e=>setMonths(Number(e.target.value))} /></label>
@@ -231,22 +257,7 @@ export default function OnboardingPage() {
         <input aria-label={'Question count '+(i+1)} className={inputStyle} type="number" min="0" max="20" value={section.count} onChange={e=>setPlan(plan.map((s,j)=>i===j?{...s,count:Number(e.target.value)}:s))} />
       </div>)}
       <button className="underline text-blue-700 block" onClick={()=>setPlan([...plan,{title:'',topic:'',type:'custom',count:1}])}>Add category (set count to 0 to disable)</button>
-      <button className={buttonStyle} disabled={busy || !reviewed} onClick={()=>act(async()=>{
-        // Build the onboarding payload, omitting dailyPlan when empty so the
-        // backend builds the default plan from confirmed resume facts and
-        // preferences instead of failing Zod validation on an empty array.
-        const onboardingPayload = {
-          targetRole:role,targetLevel:level,actualExperienceMonths:months,
-          targetCompanies:list(companies),industries:list(industries),
-          focusTopics:list(focus),excludedTopics:list(avoid),
-          difficulty,dailyPlan:plan.length ? plan : undefined,
-          interviewDate:date?new Date(date+'T12:00:00Z').toISOString():undefined,
-        };
-        await api.post('/profile/onboarding',onboardingPayload);
-        setMessage('Profile and curriculum saved. Preparing your first session…');
-        await api.post('/sessions/generate');
-        router.push('/sessions/today');
-      })}>{busy?'Working…':'Save profile and start practice'}</button>
+      <button className={buttonStyle} disabled={busy || !reviewed} onClick={()=>void startPractice()}>{busy?'Working…':'Save profile and start practice'}</button>
     </section>}
   </main>;
 }

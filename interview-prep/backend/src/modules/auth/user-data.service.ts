@@ -45,10 +45,12 @@ export async function resetUserData(userId:string) {
   }
   await QuestionFeedback.deleteMany({userId});
 
-  // Keep the account, uploaded resume files, and parsed resume facts. Reset
-  // interview preferences/progress while allowing onboarding to reuse the
-  // user's existing resume without another upload or extraction pass.
-  await InterviewProfile.deleteMany({userId});
+  // Preserve saved resume facts and resume-specific goals. Clear practice
+  // readiness so a fresh session can be generated from those saved details.
+  await InterviewProfile.updateMany({userId}, {
+    $set:{onboardingCompleted:false},
+    $unset:{onboardingCompletedAt:1},
+  });
   await User.updateOne({_id:userId}, {$set:{preferences:{
     dailyQuestions:5, codingCount:0, systemDesignCount:0, projectQuestions:0,
     studyDays:90, focusTopics:[], excludedTopics:[], revisionFrequency:'daily',
