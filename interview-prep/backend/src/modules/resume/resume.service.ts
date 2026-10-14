@@ -423,11 +423,23 @@ export const resumeService = {
     await Resume.updateMany({ userId, isDeleted: false, _id: { $ne: resume._id } }, { $set: { isActive: false } });
     resume.isActive = true;
     await resume.save();
-    if (changedActiveResume && resume.currentVersionId) {
-      const facts = await ResumeProfile.findOne({ userId, resumeVersionId: resume.currentVersionId }).select('_id userModified').lean();
+    if (resume.currentVersionId) {
+      let facts = await ResumeProfile.findOne({ userId, resumeVersionId: resume.currentVersionId });
+      if (!facts) {
+        const version = await ResumeVersion.findById(resume.currentVersionId);
+        if (!version) throw new NotFoundError('Saved resume file not found');
+        facts = await ResumeProfile.create({
+          userId: new mongoose.Types.ObjectId(userId), resumeVersionId: version._id,
+          versionNumber: version.versionNumber, skills: [], experience: [], projects: [],
+          education: [], certifications: [], parserVersion: '1.0.0', confidence: 0,
+          extractedAt: new Date(), userModified: false,
+        });
+        await this.parseResume(String(version._id));
+        facts = await ResumeProfile.findOne({ userId, resumeVersionId: version._id });
+      }
       if (facts) {
         await this.getOrCreateInterviewProfile(userId, facts._id);
-        await this.regenerateInterviewProfile(userId);
+        if (changedActiveResume) await this.regenerateInterviewProfile(userId);
       }
     }
     return resume.toObject();

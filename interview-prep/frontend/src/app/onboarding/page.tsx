@@ -56,6 +56,7 @@ export default function OnboardingPage() {
       setFocus((profile.preferences?.focusTopics || []).join(', '));
       setAvoid((profile.preferences?.excludedTopics || []).join(', ')); setDifficulty(profile.preferences?.difficulty || 'mixed');
     }
+    return Boolean(resume);
   }
   useEffect(()=> {
     if (isLoading) return;
@@ -123,12 +124,16 @@ export default function OnboardingPage() {
     if (!selectedResumeId) return;
     await act(async()=>{
       const selected = savedResumes.find(resume=>resume.id===selectedResumeId);
-      if (selected && !selected.isActive) await api.post(`/resume/${selectedResumeId}/activate`);
+      if (selected) await api.post(`/resume/${selectedResumeId}/activate`);
       setFacts(null);
-      await load();
+      const hasExtractedFacts = await load();
       setReviewed(false);
-      setMessage('Resume ready. Review its extracted facts below, then save your confirmed facts.');
-      window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
+      if (hasExtractedFacts) {
+        setMessage('Resume ready. Confirm at least one skill, project, or experience, save your reviewed facts, then save your profile to generate questions.');
+        window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
+      } else {
+        setMessage('The saved resume was selected, but no extracted profile was returned. Try uploading the resume again or choose another saved resume.');
+      }
     });
   }
   if (isLoading) return <p className="p-8">Loading…</p>;
