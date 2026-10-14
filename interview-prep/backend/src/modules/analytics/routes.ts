@@ -5,6 +5,31 @@ import { asyncHandler, ValidationError } from '../../common/filters/error-filter
 
 const router = Router();
 
+async function getPracticeStreak(userId: mongoose.Types.ObjectId): Promise<number> {
+  const QuestionHistory = mongoose.model('QuestionHistory');
+  const answeredDays = await QuestionHistory.aggregate([
+    { $match: { userId, answerSubmittedAt: { $type: 'date' } } },
+    { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$answerSubmittedAt', timezone: 'UTC' } } } },
+    { $sort: { _id: -1 } },
+    { $limit: 367 },
+  ]);
+  const activeDayKeys = new Set(answeredDays.map((row: { _id: string }) => row._id));
+  const today = new Date();
+  const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const todayKey = day.toISOString().slice(0, 10);
+
+  // Keep an unbroken streak alive through today until the day ends; otherwise
+  // start counting from yesterday and let a missed full day break the streak.
+  if (!activeDayKeys.has(todayKey)) day.setUTCDate(day.getUTCDate() - 1);
+
+  let streak = 0;
+  while (activeDayKeys.has(day.toISOString().slice(0, 10))) {
+    streak += 1;
+    day.setUTCDate(day.getUTCDate() - 1);
+  }
+  return streak;
+}
+
 /**
  * Analytics routes.
  *
@@ -21,23 +46,11 @@ router.get(
     const UserProgress = mongoose.model('UserProgress');
     const DailyRecord = mongoose.model('DailyRecord');
 
-    const [progress, recentRecords] = await Promise.all([
+    const [progress, recentRecords, currentStreak] = await Promise.all([
       UserProgress.findOne({ userId }).lean(),
       DailyRecord.find({ userId }).sort({ date: -1 }).limit(30).lean(),
+      getPracticeStreak(userId),
     ]);
-
-    // Compute a simple current streak from recent daily records
-    let currentStreak = 0;
-    const dayMs = 24 * 60 * 60 * 1000;
-    for (let i = 0; i < recentRecords.length; i++) {
-      const expected = new Date(Date.now() - i * dayMs);
-      const recordDate = new Date(recentRecords[i].date);
-      if (recordDate.toDateString() === expected.toDateString()) {
-        currentStreak += 1;
-      } else {
-        break;
-      }
-    }
 
     res.json({
       success: true,

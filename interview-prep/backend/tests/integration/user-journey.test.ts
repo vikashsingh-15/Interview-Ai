@@ -136,6 +136,34 @@ test('profile reset clears practice data while preserving resumes, skills and se
   expect((await agent.post('/api/auth/me/reset').send({confirmation:'RESET'})).status).toBe(200);
   expect(await Resume.countDocuments({userId:resetUserId})).toBe(1);
 });
+test('dashboard practice streak requires a submitted answer, not a calendar entry',async()=>{
+  const email='practice-streak@example.test';
+  const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
+  const agent=request.agent(app);
+  agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
+  const today=new Date();
+  const todayUtc=new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth(),today.getUTCDate()));
+  const yesterday=new Date(todayUtc); yesterday.setUTCDate(yesterday.getUTCDate()-1);
+  await DailyRecord.findOrCreateForDate(user._id,todayUtc);
+  await DailyRecord.findOrCreateForDate(user._id,yesterday);
+
+  const beforeAnswer=await agent.get('/api/analytics/overview');
+  expect(beforeAnswer.status).toBe(200);
+  expect(beforeAnswer.body.data.currentStreak).toBe(0);
+
+  const QuestionHistory=mongoose.model('QuestionHistory');
+  for(const answerDate of [yesterday,todayUtc]) {
+    const answerSubmittedAt=new Date(answerDate); answerSubmittedAt.setUTCHours(12);
+    await QuestionHistory.create({userId:user._id,questionId:new mongoose.Types.ObjectId(),
+      answer:'I would first clarify the requirements, then explain the trade-offs and validate the design.',
+      answerSubmittedAt,status:'ANSWERED',
+      questionSnapshot:{question:'How would you approach a production reliability problem?',topic:'Reliability',
+        subtopic:'Incidents',difficulty:'MEDIUM',questionType:'CONCEPTUAL',provenance:'CURATED'}});
+  }
+  const afterAnswer=await agent.get('/api/analytics/overview');
+  expect(afterAnswer.status).toBe(200);
+  expect(afterAnswer.body.data.currentStreak).toBe(2);
+});
 async function onboard(agent:any,email:string,skill:string,projectName:string) {
   const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
   agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));
