@@ -202,11 +202,9 @@ export default function SettingsPage() {
       await api.post('/auth/me/reset', { confirmation: 'RESET' });
       setShowResetDialog(false);
       setResetConfirmation('');
-      // Profile facts and preferences remain, so restart at the dashboard.
       window.location.href = '/dashboard';
     } catch (err: any) {
       setError(err?.response?.data?.error?.message || 'Failed to reset data. Try signing in again first.');
-      setShowResetDialog(false);
     } finally {
       setIsResetting(false);
     }
@@ -236,13 +234,13 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-red-800 dark:text-red-200">
-              Clear all practice activity, generated and asked questions, answers, calendar,
-              sessions, and progress, then restart from a fresh dashboard. Your resumes,
-              confirmed skills, profile, and settings will stay saved.
+              Clear your interview profile, projects, preferences, practice activity, generated and
+              asked questions, answers, calendar, sessions, and progress. Uploaded resume files
+              and your sign-in will stay saved so you can build a fresh profile.
             </p>
             <Button
               variant="secondary"
-              onClick={() => { setResetConfirmation(''); setShowResetDialog(true); }}
+              onClick={() => { setError(null); setResetConfirmation(''); setShowResetDialog(true); }}
               disabled={isResetting}
               className="mt-4 border-red-300 bg-red-600 text-white hover:bg-red-700"
             >
@@ -411,11 +409,12 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-brand-text">
-                  This permanently deletes your generated and asked questions, answers,
-                  history, calendar, sessions, and progress. Your resumes, confirmed skills,
-                  profile, and settings will be kept. You will remain signed in. This cannot
-                  be undone.
+                  This permanently deletes your interview profile, parsed resume details,
+                  projects, preferences, generated and asked questions, answers, history, calendar,
+                  sessions, and progress. Uploaded resume files and your sign-in will be kept.
+                  This cannot be undone.
                 </p>
+                {error && <p role="alert" className="mt-3 rounded-md bg-brand-error/10 p-3 text-sm text-brand-error">{error} <a className="font-semibold text-brand-secondary underline" href="/api/auth/google/link">Sign in with Google again</a>, then retry.</p>}
                 <label className="mt-4 block text-sm font-medium text-brand-text" htmlFor="reset-confirmation">
                   Type <span className="font-mono font-bold">RESET</span> to confirm
                 </label>

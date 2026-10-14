@@ -80,8 +80,6 @@ router.put('/me',authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>
 }));
 router.post('/me/reset',authenticate,asyncHandler(async(req:AuthenticatedRequest,res)=>{
   z.object({confirmation:z.literal('RESET')}).parse(req.body);
-  if(!req.authSession || Date.now()-new Date(req.authSession.createdAt).getTime()>10*60000)
-    throw new ForbiddenError('Sign in with Google again before resetting your data');
   const result=await authService.resetData(req.user!.id);
   res.json(result);
 }));

@@ -2,6 +2,10 @@ import mongoose from 'mongoose';
 import Resume, { ResumeVersion } from '../resume/resume.model';
 import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
 import { Question } from '../questions/question.model';
+import InterviewProfile from '../profile/interview-profile.model';
+import ResumeProfile from '../resume/resume-profile.model';
+import User from './user.model';
+import { QuestionFeedback } from '../questions/feedback.model';
 import { resumeStorage } from '../../common/services/resume-storage';
 
 // These are user activity records. Keep this list explicit so adding a new
@@ -24,7 +28,7 @@ const ACTIVITY_MODELS = [
   'QuestionGenerationPlan',
 ] as const;
 
-export async function resetUserPracticeData(userId:string) {
+export async function resetUserData(userId:string) {
   // Remove session-question join rows before their parent sessions.
   const sessions=await DailySession.find({userId}).select('_id').lean();
   await SessionQuestion.deleteMany({sessionId:{$in:sessions.map(s=>s._id)}});
@@ -39,18 +43,28 @@ export async function resetUserPracticeData(userId:string) {
     if(!model?.schema.path('userId')) continue;
     await model.deleteMany({userId});
   }
+  await QuestionFeedback.deleteMany({userId});
 
-  // Projects contain resume-derived facts that should remain, but their
-  // practice counters and links to deleted question history must be cleared.
+  // Keep the account and uploaded resume files, but clear parsed/interview
+  // profile records so the user can start onboarding from a clean profile.
+  await InterviewProfile.deleteMany({userId});
+  await ResumeProfile.deleteMany({userId});
+  await User.updateOne({_id:userId}, {$set:{preferences:{
+    dailyQuestions:5, codingCount:0, systemDesignCount:0, projectQuestions:0,
+    studyDays:90, focusTopics:[], excludedTopics:[], revisionFrequency:'daily',
+    mockInterviewDuration:45, notifyEmail:false, notifyBrowser:true,
+  }}});
+
+  // Projects are part of the interview profile and are cleared on reset.
   const Project=mongoose.models.Project;
-  if(Project) await Project.updateMany({userId},{$set:{totalQuestionsAsked:0,questionHistoryIds:[]},$unset:{lastQuestionDate:1}});
+  if(Project) await Project.deleteMany({userId});
 
   if(mongoose.models.OAuthState) await mongoose.models.OAuthState.deleteMany({linkUserId:userId});
 }
 
 /** Full account deletion removes profile and resume records as well as activity. */
 export async function deleteUserData(userId:string) {
-  await resetUserPracticeData(userId);
+  await resetUserData(userId);
 
   const resumes=await Resume.find({userId});
   const versionIds=resumes.flatMap(resume=>resume.versions);

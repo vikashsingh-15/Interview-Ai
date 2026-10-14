@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import mongoose, { Schema } from 'mongoose';
+import mongoose from 'mongoose';
 import logger from '../../config/logger';
 
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
@@ -9,10 +9,7 @@ import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
 import { QuestionHistory } from './question-history.model';
 import { Question } from './question.model';
 import { Revision } from '../revisions/revision.model';
-export const QuestionFeedback = mongoose.model('QuestionFeedback', new Schema({
-  userId: Schema.Types.ObjectId, sessionId: Schema.Types.ObjectId, questionId: Schema.Types.ObjectId,
-  kind: String, notes: String,
-}, { timestamps:true }));
+import { QuestionFeedback } from './feedback.model';
 const router = Router();
 router.post('/:sessionId/:mappingId', authenticate, asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const data = z.object({ kind:z.enum(['completed','failed','skipped','too_easy','too_hard','already_know',

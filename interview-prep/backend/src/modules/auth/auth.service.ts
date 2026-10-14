@@ -2,7 +2,7 @@ import User from './user.model';
 import { Session } from './index.model';
 import { hashToken } from '../../common/middleware/auth';
 import { NotFoundError, ForbiddenError } from '../../common/filters/error-filter';
-import { deleteUserData, resetUserPracticeData } from './user-data.service';
+import { deleteUserData, resetUserData } from './user-data.service';
 export const authService = {
   async logout(token:string) { if(token) await Session.deleteMany({token:hashToken(token)}); },
   async getProfile(userId:string) {
@@ -22,8 +22,8 @@ export const authService = {
   async resetData(userId:string) {
     const user=await User.findOne({_id:userId,isAccountDeleted:false});
     if(!user) throw new NotFoundError('User not found');
-    await resetUserPracticeData(userId);
-    return {success:true,message:'Practice data cleared. Your resumes, profile, skills, settings, and sign-in are still available.'};
+    await resetUserData(userId);
+    return {success:true,message:'Profile and practice data cleared. Your uploaded resume files and sign-in are still available.'};
   },
   async deleteAccount(userId:string) {
     const user=await User.findOne({_id:userId,isAccountDeleted:false}).select('+googleId');
