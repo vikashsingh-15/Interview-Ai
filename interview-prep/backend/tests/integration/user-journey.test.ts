@@ -87,6 +87,55 @@ test('account data deletion removes only owned GridFS files and chunks',async()=
   expect(await resumeStorage.get(otherKey)).toEqual(bytes);
   await resumeStorage.delete(otherKey);
 });
+test('profile reset clears practice data while preserving resumes, skills and settings',async()=>{
+  const agent=request.agent(app);
+  const {userId:resetUserId,version}=await onboard(agent,'profile-reset@example.test','Python','Inventory Platform');
+  expect((await agent.put('/api/profile/preferences').send({dailyQuestions:7,difficulty:'hard'})).status).toBe(200);
+  const ownedQuestion=await Question.create({ownerUserId:resetUserId,
+    question:'How would you isolate mutable state between concurrent Python request handlers?',
+    topic:'Python',subtopic:'Concurrency',concepts:['state'],difficulty:'MEDIUM',questionType:'CONCEPTUAL',
+    archetype:'CONCEPTUAL',provenance:'USER_CREATED',qualityStatus:'approved'});
+  const session=await DailySession.create({userId:resetUserId,sessionDate:new Date(),userDayNumber:1});
+  await mongoose.model('SessionQuestion').create({sessionId:session._id,questionId:ownedQuestion._id,
+    sectionId:new mongoose.Types.ObjectId(),order:0,questionSnapshot:{question:ownedQuestion.question,
+      topic:'Python',subtopic:'Concurrency'}});
+  await mongoose.model('QuestionHistory').create({userId:resetUserId,questionId:ownedQuestion._id,sessionId:session._id,
+    questionSnapshot:{question:ownedQuestion.question,topic:'TypeScript',subtopic:'Concurrency',difficulty:'MEDIUM',
+      questionType:'CONCEPTUAL',provenance:'USER_CREATED'}});
+  await QuestionExposure.create({userId:resetUserId,questionId:ownedQuestion._id,normalizedHash:'reset-fixture',
+    question:ownedQuestion.question,topic:'Python'});
+  await DailyRecord.findOrCreateForDate(new mongoose.Types.ObjectId(resetUserId),new Date());
+  const other=await User.create({email:'profile-reset-other@example.test',name:'Other',googleId:'fixture-profile-reset-other',isEmailVerified:true});
+  const otherQuestion=await Question.create({ownerUserId:other._id,
+    question:'How would you protect shared state when concurrent workers update a Python service?',
+    topic:'Python',subtopic:'Concurrency',concepts:['state'],difficulty:'MEDIUM',questionType:'CONCEPTUAL',
+    archetype:'CONCEPTUAL',provenance:'USER_CREATED',qualityStatus:'approved'});
+  const interviewProfileBefore=await InterviewProfile.findOne({userId:resetUserId}).lean() as any;
+  const curatedBefore=await Question.countDocuments({provenance:'CURATED'});
+
+  expect((await request(app).post('/api/auth/me/reset').send({confirmation:'RESET'})).status).toBe(401);
+  const reset=await agent.post('/api/auth/me/reset').send({confirmation:'RESET'});
+  expect(reset.status).toBe(200);
+  expect(await Resume.countDocuments({userId:resetUserId})).toBe(1);
+  expect(await ResumeVersion.countDocuments({userId:resetUserId,_id:version})).toBe(1);
+  expect((await agent.get('/api/resume/files/'+version)).status).toBe(200);
+  expect(await ResumeProfile.countDocuments({userId:resetUserId})).toBeGreaterThan(0);
+  const interviewProfile=await InterviewProfile.findOne({userId:resetUserId}).lean() as any;
+  expect(interviewProfile.confirmedSkills).toEqual(interviewProfileBefore.confirmedSkills);
+  expect(interviewProfile.preferences.dailyQuestions).toBe(7);
+  expect(interviewProfile.preferences.difficulty).toBe('hard');
+  expect(await mongoose.model('Session').countDocuments({userId:resetUserId})).toBeGreaterThan(0);
+  expect(await DailySession.countDocuments({userId:resetUserId})).toBe(0);
+  expect(await mongoose.model('SessionQuestion').countDocuments({sessionId:session._id})).toBe(0);
+  expect(await mongoose.model('QuestionHistory').countDocuments({userId:resetUserId})).toBe(0);
+  expect(await QuestionExposure.countDocuments({userId:resetUserId})).toBe(0);
+  expect(await DailyRecord.countDocuments({userId:resetUserId})).toBe(0);
+  expect(await Question.countDocuments({ownerUserId:resetUserId})).toBe(0);
+  expect(await Question.exists({_id:otherQuestion._id,ownerUserId:other._id})).toBeTruthy();
+  expect(await Question.countDocuments({provenance:'CURATED'})).toBe(curatedBefore);
+  expect((await agent.post('/api/auth/me/reset').send({confirmation:'RESET'})).status).toBe(200);
+  expect(await Resume.countDocuments({userId:resetUserId})).toBe(1);
+});
 async function onboard(agent:any,email:string,skill:string,projectName:string) {
   const user=await User.create({email,name:'Candidate',googleId:'fixture-'+email,isEmailVerified:true});
   agent.set('Cookie',config.auth.cookieName+'='+await createSession(String(user._id)));

@@ -109,6 +109,9 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -190,6 +193,25 @@ export default function SettingsPage() {
     }
   };
 
+  const resetAllData = async () => {
+    if (isResetting) return;
+    setIsResetting(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await api.post('/auth/me/reset', { confirmation: 'RESET' });
+      setShowResetDialog(false);
+      setResetConfirmation('');
+      // Profile facts and preferences remain, so restart at the dashboard.
+      window.location.href = '/dashboard';
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Failed to reset data. Try signing in again first.');
+      setShowResetDialog(false);
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -208,6 +230,26 @@ export default function SettingsPage() {
         <p className="mt-2 text-brand-textSecondary">
           Choose how many questions you get each day and how hard they should be.
         </p>
+        <Card className="mt-6 border-red-300 bg-red-50 dark:bg-red-950/20">
+          <CardHeader>
+            <CardTitle className="text-red-700 dark:text-red-300">Reset profile</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-800 dark:text-red-200">
+              Clear all practice activity, generated and asked questions, answers, calendar,
+              sessions, and progress, then restart from a fresh dashboard. Your resumes,
+              confirmed skills, profile, and settings will stay saved.
+            </p>
+            <Button
+              variant="secondary"
+              onClick={() => { setResetConfirmation(''); setShowResetDialog(true); }}
+              disabled={isResetting}
+              className="mt-4 border-red-300 bg-red-600 text-white hover:bg-red-700"
+            >
+              {isResetting ? 'Resetting…' : 'Reset profile and clear practice data'}
+            </Button>
+          </CardContent>
+        </Card>
         <Card className="mt-6"><CardHeader><CardTitle>Appearance</CardTitle></CardHeader><CardContent><p className="mb-3 text-sm text-brand-textSecondary">Choose how Interview Prep should look on this device.</p><div className="flex flex-wrap gap-2" role="group" aria-label="Theme preference">{(['light', 'dark', 'system'] as ThemeMode[]).map(option => <button key={option} type="button" onClick={() => setTheme(option)} aria-pressed={theme === option} className={`rounded-lg border px-4 py-2 text-sm font-medium capitalize transition-colors ${theme === option ? 'border-brand-secondary bg-brand-secondary/10 text-brand-secondary' : 'border-brand-border bg-brand-surface text-brand-text hover:bg-brand-primary/10'}`}>{option}</button>)}</div></CardContent></Card>
         <div className="mt-8 border-t border-brand-border pt-8"><ResumeManager /></div>
 
@@ -359,6 +401,52 @@ export default function SettingsPage() {
               </p>
             </CardContent>
           </Card>
+        )}
+
+        {showResetDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Confirm data reset">
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <CardTitle>Reset profile and practice data?</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-brand-text">
+                  This permanently deletes your generated and asked questions, answers,
+                  history, calendar, sessions, and progress. Your resumes, confirmed skills,
+                  profile, and settings will be kept. You will remain signed in. This cannot
+                  be undone.
+                </p>
+                <label className="mt-4 block text-sm font-medium text-brand-text" htmlFor="reset-confirmation">
+                  Type <span className="font-mono font-bold">RESET</span> to confirm
+                </label>
+                <input
+                  id="reset-confirmation"
+                  type="text"
+                  value={resetConfirmation}
+                  onChange={(e) => setResetConfirmation(e.target.value)}
+                  className="mt-1 w-full rounded border border-brand-border bg-white p-2 font-mono text-sm"
+                  autoComplete="off"
+                  autoFocus
+                />
+                <div className="mt-4 flex justify-end gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => { setShowResetDialog(false); setResetConfirmation(''); }}
+                    disabled={isResetting}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={resetAllData}
+                    disabled={resetConfirmation.trim() !== 'RESET' || isResetting}
+                    className="border-red-300 bg-red-600 text-white hover:bg-red-700"
+                  >
+                    {isResetting ? 'Resetting…' : 'Reset profile'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
     </div>

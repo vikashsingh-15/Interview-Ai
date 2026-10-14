@@ -2,7 +2,7 @@ import User from './user.model';
 import { Session } from './index.model';
 import { hashToken } from '../../common/middleware/auth';
 import { NotFoundError, ForbiddenError } from '../../common/filters/error-filter';
-import { deleteUserData } from './user-data.service';
+import { deleteUserData, resetUserPracticeData } from './user-data.service';
 export const authService = {
   async logout(token:string) { if(token) await Session.deleteMany({token:hashToken(token)}); },
   async getProfile(userId:string) {
@@ -17,6 +17,13 @@ export const authService = {
     if(data.name!==undefined)user.name=data.name;
     if(data.preferences)Object.assign(user.preferences,data.preferences);
     await user.save();return this.getProfile(userId);
+  },
+  // Wipe every owned artifact but keep the authenticated account itself.
+  async resetData(userId:string) {
+    const user=await User.findOne({_id:userId,isAccountDeleted:false});
+    if(!user) throw new NotFoundError('User not found');
+    await resetUserPracticeData(userId);
+    return {success:true,message:'Practice data cleared. Your resumes, profile, skills, settings, and sign-in are still available.'};
   },
   async deleteAccount(userId:string) {
     const user=await User.findOne({_id:userId,isAccountDeleted:false}).select('+googleId');
