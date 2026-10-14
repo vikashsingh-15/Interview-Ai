@@ -22,6 +22,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [facts,setFacts] = useState<any>(null);
   const [savedResumes,setSavedResumes] = useState<any[]>([]);
+  const [selectedResumeId,setSelectedResumeId] = useState('');
   const [reviewed,setReviewed] = useState(false);
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState('');
@@ -43,6 +44,8 @@ export default function OnboardingPage() {
       api.get('/profile/onboarding'), api.get('/resume/list'),
     ]);
     setSavedResumes(resumeResponse.data.data || []);
+    const activeResume = (resumeResponse.data.data || []).find((resume:any)=>resume.isActive);
+    setSelectedResumeId((current)=>current || activeResume?.id || '');
     const resume = data.data.resume?.profile;
     const profile = data.data.profile;
     if (resume) { setFacts(resume); setReviewed(Boolean(resume.userModified)); setMonths(resume.totalExperienceMonths || 0); }
@@ -116,13 +119,16 @@ export default function OnboardingPage() {
       await load();setReviewed(false);setMessage('Resume extracted. Nothing is trusted until you review and confirm it.');
     });
   }
-  async function selectResume(resumeId:string) {
+  async function continueWithResume() {
+    if (!selectedResumeId) return;
     await act(async()=>{
-      await api.post(`/resume/${resumeId}/activate`);
+      const selected = savedResumes.find(resume=>resume.id===selectedResumeId);
+      if (selected && !selected.isActive) await api.post(`/resume/${selectedResumeId}/activate`);
       setFacts(null);
       await load();
       setReviewed(false);
-      setMessage('Saved resume selected. Review its extracted facts before continuing.');
+      setMessage('Resume ready. Review its extracted facts below, then save your confirmed facts.');
+      window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
     });
   }
   if (isLoading) return <p className="p-8">Loading…</p>;
@@ -135,9 +141,10 @@ export default function OnboardingPage() {
     <section className="rounded border p-5 space-y-3"><h2 className="text-xl font-semibold">1. Choose a resume</h2>
       {savedResumes.length > 0 && <div className="space-y-2"><p>Select a resume you have already uploaded:</p>
         {savedResumes.map(resume=><div key={resume.id} className="flex flex-wrap items-center justify-between gap-3 rounded border p-3">
-          <span>{resume.name}{resume.targetRole ? ` · ${resume.targetRole}` : ''}{resume.isActive ? ' · Active' : ''}</span>
-          <button type="button" className={buttonStyle} disabled={busy || resume.isActive} onClick={()=>void selectResume(resume.id)}>{resume.isActive ? 'Selected' : 'Use this resume'}</button>
+          <label className="flex items-center gap-2"><input type="radio" name="savedResume" value={resume.id} checked={selectedResumeId===resume.id} onChange={()=>setSelectedResumeId(resume.id)} />
+            <span>{resume.name}{resume.targetRole ? ` · ${resume.targetRole}` : ''}{resume.isActive ? ' · Active' : ''}</span></label>
         </div>)}
+        <button type="button" className={buttonStyle} disabled={busy || !selectedResumeId} onClick={()=>void continueWithResume()}>{busy ? 'Loading resume…' : 'Select and continue'}</button>
       </div>}
       <h3 className="font-medium">Or upload a new resume</h3>
       <p>Text-based PDF or DOCX. Uploading again creates a version; old versions are retained until you delete your resume.</p>
@@ -145,7 +152,7 @@ export default function OnboardingPage() {
         onChange={e=>{const file=e.target.files?.[0];if(file)void upload(file);}} />
       <p className="text-sm text-gray-600">Resume facts are suggestions until you confirm them. After saving confirmed facts, you can generate editable answer drafts grounded in your projects and experience.</p>
     </section>
-    {facts && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">2. Review extracted facts</h2>
+    {facts && <section id="resume-facts-review" className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">2. Review extracted facts</h2>
       <label className="block">Current role<input className={inputStyle} value={facts.currentRole || ''}
         onChange={e=>{setReviewed(false);setFacts({...facts,currentRole:e.target.value});}} /></label>
       <h3 className="font-semibold">Skills</h3>
