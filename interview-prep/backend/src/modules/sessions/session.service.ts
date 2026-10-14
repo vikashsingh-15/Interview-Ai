@@ -300,7 +300,7 @@ export const sessionService = {
           } catch (error) {
             codingFallbackError = (error as Error).message;
             logger.warn('Coding question generation failed', { userId, topic:planned.topic,
-              bankSize, error:(error as Error).message });
+              error:(error as Error).message });
           }
           if (section.totalQuestions < planned.count) {
             const aiConfigured = hasAI() || hasFallbackAI();
@@ -464,7 +464,7 @@ export const sessionService = {
   async markQuestionReviewed(sessionId: string, mappingId: string, userId: string): Promise<number> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');
-    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean();
+    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean() as { questionId: mongoose.Types.ObjectId } | null;
     if (!existing || !await Question.exists({ _id:existing.questionId, ownerUserId:new mongoose.Types.ObjectId(userId) })) {
       throw new NotFoundError('Question not found in session');
     }
@@ -487,7 +487,7 @@ export const sessionService = {
   async skipQuestion(sessionId: string, mappingId: string, userId: string): Promise<any> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');
-    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean();
+    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean() as { questionId: mongoose.Types.ObjectId } | null;
     if (!existing || !await Question.exists({ _id:existing.questionId, ownerUserId:new mongoose.Types.ObjectId(userId) })) {
       throw new NotFoundError('Question not found in session');
     }

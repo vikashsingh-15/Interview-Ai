@@ -79,7 +79,7 @@ router.post('/:id/answer',asyncHandler(async(req:AuthenticatedRequest,res)=>{
     interview.averageScore=interview.questions.filter(q=>q.status==='answered')
       .reduce((n,q)=>n+(q.evaluation?.overallScore || 0),0)/interview.answeredQuestions;
     (interview as any).turnInProgress=false;await interview.save();
-    res.json({success:true,data:publicInterview(interview)});
+    res.json({success:true,data:await publicInterview(interview,req.user!.id)});
   } catch(error) {
     await MockInterview.updateOne({_id:interview._id},{$set:{turnInProgress:false}});
     throw error;

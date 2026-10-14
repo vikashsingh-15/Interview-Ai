@@ -94,7 +94,7 @@ router.post('/onboarding/answer-drafts', asyncHandler(async (req: AuthenticatedR
 router.get('/onboarding', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const resume = await resumeService.getResume(req.user!.id);
   const profile = resume?.profile ? await InterviewProfile.findOne({ userId: req.user!.id, resumeProfileId: resume.profile._id }).lean() : null;
-  res.json({ success: true, data: { resume, profile } });
+  res.json({ success: true, data: { resume, resumeProfile: resume?.profile || null, profile } });
 }));
 router.put('/review', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const data = reviewSchema.parse(req.body);

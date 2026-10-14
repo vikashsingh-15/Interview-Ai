@@ -99,6 +99,22 @@ router.post('/:id/activate', authenticate, asyncHandler(async (req: Authenticate
   res.json({ success: true, data: resume });
 }));
 
+router.post('/:id/select-for-onboarding', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  await resumeService.activateResume(req.user!.id, req.params.id);
+  const selected = await resumeService.getResume(req.user!.id);
+  if (String(selected?.resume?.id) !== req.params.id || !selected?.profile) {
+    throw new BadRequestError('This saved resume has no readable version to extract. Check the saved file and try again.');
+  }
+  const interviewProfile = await InterviewProfile.findOne({
+    userId: req.user!.id, resumeProfileId: selected.profile._id,
+  }).lean();
+  res.json({ success: true, data: {
+    resume: selected.resume,
+    resumeProfile: selected.profile,
+    interviewProfile,
+  } });
+}));
+
 router.patch('/:id', authenticate, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const body = z.object({ name: z.string().min(1).max(120), targetRole: z.string().max(160).optional() }).parse(req.body);
   res.json({ success: true, data: await resumeService.renameResume(req.user!.id, req.params.id, body.name, body.targetRole) });

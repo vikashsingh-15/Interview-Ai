@@ -39,6 +39,15 @@ export default function OnboardingPage() {
   const [skillDraft,setSkillDraft] = useState('');
   const [generatingAnswers,setGeneratingAnswers] = useState(false);
   const skillInput = useRef<HTMLInputElement>(null);
+  function applyInterviewProfile(profile:any) {
+    setRole(profile?.targetRole || ''); setLevel(profile?.targetLevel || '');
+    setCompanies((profile?.targetCompanies || []).join(', '));
+    setIndustries((profile?.industries || []).join(', ')); setPlan(profile?.dailyPlan || []);
+    setFocus((profile?.preferences?.focusTopics || []).join(', '));
+    setAvoid((profile?.preferences?.excludedTopics || []).join(', '));
+    setDifficulty(profile?.preferences?.difficulty || 'mixed');
+    if (profile?.actualExperienceMonths != null) setMonths(profile.actualExperienceMonths);
+  }
   async function load() {
     const [{ data }, resumeResponse] = await Promise.all([
       api.get('/profile/onboarding'), api.get('/resume/list'),
@@ -46,16 +55,10 @@ export default function OnboardingPage() {
     setSavedResumes(resumeResponse.data.data || []);
     const activeResume = (resumeResponse.data.data || []).find((resume:any)=>resume.isActive);
     setSelectedResumeId((current)=>current || activeResume?.id || '');
-    const resume = data.data.resume?.profile;
+    const resume = data.data.resumeProfile || data.data.resume?.profile;
     const profile = data.data.profile;
     if (resume) { setFacts(resume); setReviewed(Boolean(resume.userModified)); setMonths(resume.totalExperienceMonths || 0); }
-    if (profile) {
-      setRole(profile.targetRole || ''); setLevel(profile.targetLevel || '');
-      setMonths(profile.actualExperienceMonths || 0); setCompanies((profile.targetCompanies || []).join(', '));
-      setIndustries((profile.industries || []).join(', ')); setPlan(profile.dailyPlan || []);
-      setFocus((profile.preferences?.focusTopics || []).join(', '));
-      setAvoid((profile.preferences?.excludedTopics || []).join(', ')); setDifficulty(profile.preferences?.difficulty || 'mixed');
-    }
+    applyInterviewProfile(profile);
     return Boolean(resume);
   }
   useEffect(()=> {
@@ -123,17 +126,15 @@ export default function OnboardingPage() {
   async function continueWithResume() {
     if (!selectedResumeId) return;
     await act(async()=>{
-      const selected = savedResumes.find(resume=>resume.id===selectedResumeId);
-      if (selected) await api.post(`/resume/${selectedResumeId}/activate`);
-      setFacts(null);
-      const hasExtractedFacts = await load();
-      setReviewed(false);
-      if (hasExtractedFacts) {
-        setMessage('Resume ready. Confirm at least one skill, project, or experience, save your reviewed facts, then save your profile to generate questions.');
-        window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
-      } else {
-        setMessage('The saved resume was selected, but no extracted profile was returned. Try uploading the resume again or choose another saved resume.');
-      }
+      const response = await api.post(`/resume/${selectedResumeId}/select-for-onboarding`);
+      const extracted = response.data.data.resumeProfile;
+      setFacts(extracted);
+      setReviewed(Boolean(extracted.userModified));
+      setMonths(extracted.totalExperienceMonths || 0);
+      applyInterviewProfile(response.data.data.interviewProfile);
+      setSavedResumes(previous=>previous.map(resume=>({...resume,isActive:resume.id===selectedResumeId})));
+      setMessage('Resume ready. Confirm at least one skill, project, or experience, save your reviewed facts, then save your profile to generate questions.');
+      window.setTimeout(()=>document.getElementById('resume-facts-review')?.scrollIntoView({behavior:'smooth',block:'start'}),0);
     });
   }
   if (isLoading) return <p className="p-8">Loading…</p>;
