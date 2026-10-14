@@ -69,15 +69,20 @@ router.post('/onboarding/answer-drafts', asyncHandler(async (req: AuthenticatedR
   const facts = resume?.currentVersionId ? await ResumeProfile.findOne({ userId: req.user!.id, resumeVersionId: resume.currentVersionId }).lean() : null;
   if (!facts || !resume?.currentVersionId) throw new BadRequestError('Upload and parse a resume before generating answer drafts');
   const storedEntry: any = (data.entryType === 'project' ? facts.projects : facts.experience)[data.entryIndex];
-  if (storedEntry?.isRemoved || !storedEntry) throw new BadRequestError('Select an existing, non-rejected resume entry');
+  if (storedEntry?.isRemoved) throw new BadRequestError('Select a non-rejected resume entry');
   if (!hasAnyAI()) throw new AIProviderError('AI answer generation is not configured on the backend. Set AI_API_KEY and AI_MODEL, then restart the backend.', 'unconfigured');
-  const version = await ResumeVersion.findOne({ _id: resume.currentVersionId, userId: req.user!.id });
+  // The active Resume above establishes ownership. Older ResumeVersion rows
+  // may predate the optional userId field, but still belong to this resume.
+  if (!resume.versions.some(id => String(id) === String(resume.currentVersionId))) {
+    throw new NotFoundError('Resume version not found');
+  }
+  const version = await ResumeVersion.findById(resume.currentVersionId);
   if (!version) throw new NotFoundError('Resume version not found');
-  const resumeText = await extractResumeText(await resumeStorage.get(version.storageKey, version.storageProvider || 'gridfs'), version.mimeType);
-  const anchor = data.entryType === 'project' ? (storedEntry.name || data.entry.name) : (storedEntry.company || data.entry.company);
+  const resumeText = await extractResumeText(await resumeStorage.get(version.storageKey, version.storageProvider || 'local'), version.mimeType);
+  const anchor = data.entryType === 'project' ? (storedEntry?.name || data.entry.name) : (storedEntry?.company || data.entry.company);
   const offset = anchor ? resumeText.toLowerCase().indexOf(String(anchor).toLowerCase()) : -1;
   const excerpt = offset >= 0 ? resumeText.slice(offset, offset + 4500) : resumeText.slice(0, 4500);
-  const entry = { ...data.entry, description: data.entry.description || (data.entryType === 'project' ? storedEntry.description : undefined) };
+  const entry = { ...data.entry, description: data.entry.description || (data.entryType === 'project' ? storedEntry?.description : undefined) };
   if (!entry.description && !entry.responsibilities.length && !excerpt.trim()) throw new BadRequestError('This entry has no resume description to ground an answer');
   try {
     const result = await structuredAI({ userId: req.user!.id, purpose: 'onboarding-answer-drafts', version: 'onboarding-answers-v2', schema: answerDraftResponseSchema,

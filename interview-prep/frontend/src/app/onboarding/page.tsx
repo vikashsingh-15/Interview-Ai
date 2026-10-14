@@ -41,6 +41,7 @@ export default function OnboardingPage() {
   const [plan,setPlan] = useState<any[]>([]);
   const [skillDraft,setSkillDraft] = useState('');
   const [generatingAnswers,setGeneratingAnswers] = useState(false);
+  const [draftMessage,setDraftMessage] = useState('');
   const skillInput = useRef<HTMLInputElement>(null);
   function applyInterviewProfile(profile:any) {
     setRole(profile?.targetRole || ''); setLevel(profile?.targetLevel || '');
@@ -83,26 +84,28 @@ export default function OnboardingPage() {
   }
   async function generateAnswers(targetKind?:'experience'|'projects', targetIndex?:number, targetField?:string) {
     if (!facts) return;
-    setGeneratingAnswers(true); setMessage('');
+    setGeneratingAnswers(true); setDraftMessage('Generating answer drafts…');
     setFacts((previous:any)=>({...previous,
       experience:previous.experience.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : value]))),
       projects:previous.projects.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : staleDraft(value) ? '' : value]))),
     }));
     try {
-      let generated=0, unsupported=0;
+      let generated=0, unsupported=0, eligibleFields=0;
       for (const kind of (targetKind ? [targetKind] : ['experience','projects']) as ('experience'|'projects')[]) {
         for (let i=0;i<facts[kind].length;i++) {
           if (targetIndex !== undefined && i!==targetIndex || facts[kind][i].isRemoved) continue;
           const item=facts[kind][i];
           const fields=answerFields[kind].filter(field => (!targetField || field===targetField) && emptyAnswer(item[field]));
           if (!fields.length) continue;
+          eligibleFields += fields.length;
           const questions=fields.map(field=>({id:field,kind:field,prompt:`Draft ${field.replace(/([A-Z])/g,' $1')} for ${kind==='projects' ? item.name : `${item.role} at ${item.company}`}. Use the entry description and resume excerpt. Leave unsupported claims empty.`}));
           const response=await api.post('/profile/onboarding/answer-drafts',{entryType:kind==='projects'?'project':'experience',entryIndex:i,
             entry:{name:item.name,description:item.description,company:item.company,role:item.role,technologies:item.technologies || [],
               responsibilities:(item.responsibilities || []).filter((v:string)=>!staleDraft(v)),achievements:(item.achievements || []).filter((v:string)=>!staleDraft(v)),technicalClaims:(item.technicalClaims || []).filter((v:string)=>!staleDraft(v))},questions});
           const answers=response.data.data.answers || [];
-          generated += answers.filter((answer:any)=>fields.includes(answer.id) && answer.draft?.trim()).length;
-          unsupported += answers.filter((answer:any)=>fields.includes(answer.id) && !answer.draft?.trim()).length;
+          const drafted = answers.filter((answer:any)=>fields.includes(answer.id) && answer.draft?.trim()).length;
+          generated += drafted;
+          unsupported += fields.length - drafted;
           setFacts((previous:any)=>({...previous,[kind]:previous[kind].map((current:any,j:number)=> {
             if(j!==i)return current;
             const updated={...current};
@@ -115,9 +118,15 @@ export default function OnboardingPage() {
           })}));
         }
       }
-      setReviewed(false);
-      setMessage(`${generated} AI draft${generated===1?'':'s'} added. ${unsupported} field${unsupported===1?'':'s'} had no supporting resume detail and remain empty. Review every answer before saving.`);
-    } catch (e:any) { setMessage(e.response?.data?.error?.message || 'Could not generate answer drafts.'); }
+      if (!eligibleFields) {
+        setDraftMessage((facts.experience.length || facts.projects.length)
+          ? 'All answer fields already have content. Clear a field if you want a new draft.'
+          : 'Add a work experience or project before generating answer drafts.');
+      } else {
+        if (generated) setReviewed(false);
+        setDraftMessage(`${generated} AI draft${generated===1?'':'s'} added. ${unsupported} field${unsupported===1?'':'s'} had no supporting resume detail and remain empty. ${generated ? 'Review the drafts before saving.' : 'Add more detail to your resume entry, then retry.'}`);
+      }
+    } catch (e:any) { setDraftMessage(e.response?.data?.error?.message || 'Could not generate answer drafts. Please retry.'); }
     finally { setGeneratingAnswers(false); }
   }
   async function upload(file:File) {
@@ -237,6 +246,7 @@ export default function OnboardingPage() {
       <button className="rounded border border-blue-700 text-blue-700 px-4 py-2 disabled:opacity-50" disabled={busy || generatingAnswers} onClick={()=>void generateAnswers()}>
         {generatingAnswers ? 'Generating answer drafts…' : 'Generate all empty answers with AI'}
       </button>
+      {draftMessage && <p role="status" aria-live="polite" className="rounded border border-brand-border bg-brand-surface p-3 text-sm text-brand-text">{draftMessage}</p>}
       <p className="text-xs text-gray-600">Generated answers are drafts only. Verify that every statement is true before saving them as reviewed facts.</p>
     </section>}
     {facts && loadedResumeId===selectedResumeId && <section className="rounded border p-5 space-y-4"><h2 className="text-xl font-semibold">3. Goals and daily plan</h2>
