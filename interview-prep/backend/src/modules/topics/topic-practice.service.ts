@@ -66,22 +66,14 @@ export async function getActiveResumeProfileId(userId: string): Promise<mongoose
   return profile ? profile._id : null;
 }
 
-/**
- * Bank visibility for one user.
- *
- * The id is cast to an ObjectId explicitly: inside an `$or`/`$and` sub-document
- * mongoose does not cast values against the schema, so a string userId matches
- * nothing in either `aggregate()` or `countDocuments()`. Curated bank rows have
- * no owner, so they are visible to everyone; owned rows are private.
- */
+/** Topic-wise practice is personal: shared curated rows belong to the app bank,
+ * not to a user's topic list. Keep the ID as an ObjectId for aggregate matching. */
 function bankVisibility(userId: string) {
   const ownerId = new mongoose.Types.ObjectId(userId);
-  return {
-    $or: [{ ownerUserId: { $exists: false }, provenance: 'CURATED' }, { ownerUserId: ownerId }],
-  };
+  return { ownerUserId: ownerId };
 }
 
-/** Distinct topics in the visible bank, with counts by difficulty and Coding split out. */
+/** Distinct topics in this user's question bank, with difficulty counts and Coding split out. */
 export async function listTopics(userId: string) {
   const visibility = bankVisibility(userId);
   const rows = await Question.aggregate([
@@ -727,12 +719,8 @@ export async function startPracticeSet(params: {
 /** Load one practice question with its history state, enforcing ownership. */
 async function loadPracticeQuestion(userId: string, questionId: string) {
   if (!mongoose.Types.ObjectId.isValid(questionId)) throw new ValidationError('Invalid question id');
-  const question = await Question.findById(questionId);
+  const question = await Question.findOne({ _id:questionId, ownerUserId:new mongoose.Types.ObjectId(userId) });
   if (!question) throw new NotFoundError('Question not found');
-  const visibilityOk =
-    (!question.ownerUserId && question.provenance === 'CURATED') ||
-    String(question.ownerUserId ?? '') === String(userId);
-  if (!visibilityOk) throw new NotFoundError('Question not found');
   return question;
 }
 
@@ -853,7 +841,9 @@ export async function topicHistory(params: {
 }) {
   const { userId, topic, limit: rawLimit } = params;
   const limit = Math.max(1, Math.min(rawLimit ?? 50, 200));
-  const filter: Record<string, any> = { userId: new mongoose.Types.ObjectId(userId) };
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const ownedQuestionIds = await Question.distinct('_id', { ownerUserId: userObjectId });
+  const filter: Record<string, any> = { userId: userObjectId, questionId: { $in: ownedQuestionIds } };
   if (params.source) {
     const source = await loadPracticeSource(userId, params.source);
     const ids = await Question.find({ ownerUserId: userId, 'practiceSource.kind': source.kind,
@@ -893,8 +883,9 @@ export async function topicHistory(params: {
 
 /** Brief per-topic progress counts for the topic picker cards. */
 export async function topicProgressSummary(userId: string) {
+  const ownedQuestionIds = await Question.distinct('_id', { ownerUserId: new mongoose.Types.ObjectId(userId) });
   const rows = await QuestionHistory.aggregate([
-    { $match: { userId: new mongoose.Types.ObjectId(userId) } },
+    { $match: { userId: new mongoose.Types.ObjectId(userId), questionId: { $in: ownedQuestionIds } } },
     {
       $group: {
         _id: { $cond: [{ $eq: ['$isCoding', true] }, 'Coding', '$questionSnapshot.topic'] },

@@ -227,7 +227,7 @@ router.get('/question/:questionId/answer', authenticate,
     const { getOrCreateQuestionAnswer } = await import('../questions/answer.service');
     const { NotFoundError, ValidationError } = await import('../../common/filters/error-filter');
     if (!mongoose.Types.ObjectId.isValid(req.params.questionId)) throw new ValidationError('Invalid question id');
-    const question = await Question.findById(req.params.questionId);
+    const question = await Question.findOne({ _id:req.params.questionId, ownerUserId:req.user!.id });
     if (!question) throw new NotFoundError('Question not found');
     const answer = await getOrCreateQuestionAnswer({ question, userId: req.user!.id });
     res.json({ success:true, data: answer });
@@ -240,7 +240,7 @@ router.post('/question/:questionId/generate-answer', authenticate,
     const { getOrCreateQuestionAnswer } = await import('../questions/answer.service');
     const { NotFoundError, ValidationError } = await import('../../common/filters/error-filter');
     if (!mongoose.Types.ObjectId.isValid(req.params.questionId)) throw new ValidationError('Invalid question id');
-    const question = await Question.findById(req.params.questionId);
+    const question = await Question.findOne({ _id:req.params.questionId, ownerUserId:req.user!.id });
     if (!question) throw new NotFoundError('Question not found');
     const answer = await getOrCreateQuestionAnswer({ question, userId: req.user!.id, regenerate: true });
     res.json({ success:true, data: answer });
@@ -436,6 +436,7 @@ router.get(
         populate: {
           path: 'questions',
           model: 'SessionQuestion',
+          populate: { path: 'questionId', model: 'Question', select: 'ownerUserId' },
         },
       })
       .lean();
@@ -470,7 +471,9 @@ router.get(
           notes: section.notes,
           topic: section.topic,
           subtopic: section.subtopic,
-          questions: section.questions?.map((q: any) => ({
+          questions: section.questions?.filter((q: any) =>
+            q?.questionId && typeof q.questionId === 'object' && String(q.questionId.ownerUserId || '') === req.user!.id
+          ).map((q: any) => ({
             id: q._id,
             order: q.order,
             status: q.status,

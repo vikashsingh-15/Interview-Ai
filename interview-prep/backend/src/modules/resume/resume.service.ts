@@ -341,10 +341,29 @@ export const resumeService = {
     }
 
     // Get latest resume profile
-    const profile = await ResumeProfile.findOne({
+    let profile = await ResumeProfile.findOne({
       userId: new mongoose.Types.ObjectId(userId),
       resumeVersionId: resume.currentVersionId?._id,
-    }).lean();
+    });
+
+    // Profile reset intentionally retains uploaded resume files. Rebuild the
+    // parsed profile on demand so onboarding can reuse the saved resume.
+    if (!profile && resume.currentVersionId?._id) {
+      const version = await ResumeVersion.findById(resume.currentVersionId._id);
+      if (version) {
+        profile = await ResumeProfile.create({
+          userId: new mongoose.Types.ObjectId(userId),
+          resumeVersionId: version._id,
+          versionNumber: version.versionNumber,
+          skills: [], experience: [], projects: [], education: [], certifications: [],
+          parserVersion: '1.0.0', confidence: 0, extractedAt: new Date(), userModified: false,
+        });
+        await this.parseResume(String(version._id));
+        profile = await ResumeProfile.findOne({ userId, resumeVersionId: version._id });
+      }
+    }
+
+    if (profile) await this.getOrCreateInterviewProfile(userId, profile._id);
 
     return {
       resume: {

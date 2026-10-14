@@ -7,11 +7,32 @@ import DailyRecord, {
 } from './daily-record.model';
 import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
 import { QuestionHistory } from '../questions/question-history.model';
+import { Question } from '../questions/question.model';
 import { ValidationError } from '../../common/filters/error-filter';
 import { runJob } from '../../common/logging/job';
 
 function normalizeQuestionTitle(title: string): string {
   return title.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+async function keepOwnedQuestionsOnly(userId: string, records: any[]) {
+  const resolved = await resolveQuestionIdsForRecords(userId, records as any);
+  const ids = records.flatMap(record => (record.entries || []).map((entry: any) =>
+    entry.metadata?.questionId || resolved.get(`${record.dateKey}:${normalizeQuestionTitle(entry.title || '')}`))
+    .filter(Boolean));
+  const owned = new Set((await Question.distinct('_id', {
+    _id: { $in: ids }, ownerUserId: new mongoose.Types.ObjectId(userId),
+  })).map(id => String(id)));
+
+  for (const record of records) {
+    record.entries = (record.entries || []).filter((entry: any) => {
+      if (entry.type === 'search') return true;
+      const id = entry.metadata?.questionId || resolved.get(`${record.dateKey}:${normalizeQuestionTitle(entry.title || '')}`);
+      return id && owned.has(String(id));
+    });
+    recomputeTotals(record as IDailyRecordDocument);
+  }
+  return records;
 }
 
 /**
@@ -176,22 +197,14 @@ export const calendarService = {
         new mongoose.Types.ObjectId(userId),
         date
       );
+      await keepOwnedQuestionsOnly(userId, [record]);
       return record;
     }
     const record = await DailyRecord.findOne({
       userId: new mongoose.Types.ObjectId(userId),
       dateKey: DailyRecord.getDateKey(date),
     });
-    if (record) {
-      const ids = await resolveQuestionIdsForRecords(userId, [record]);
-      for (const entry of record.entries) {
-        const key = `${record.dateKey}:${normalizeQuestionTitle(entry.title)}`;
-        const questionId = ids.get(key);
-        if (questionId && !entry.metadata?.questionId) {
-          entry.metadata = { ...(entry.metadata || {}), questionId };
-        }
-      }
-    }
+    if (record) await keepOwnedQuestionsOnly(userId, [record]);
     return record;
   },
 
@@ -205,9 +218,9 @@ export const calendarService = {
       date: { $gte: start, $lt: end },
     })
       .sort({ date: 1 })
-      .select('date dateKey totals averageScore sessionDayNumber sessionStatus notes')
+      .select('date dateKey entries totals averageScore sessionDayNumber sessionStatus notes')
       .lean();
-
+    await keepOwnedQuestionsOnly(userId, records as any[]);
     return {
       year,
       month,
@@ -238,12 +251,13 @@ export const calendarService = {
     const end = DailyRecord.startOfUtcDay(endDate);
     end.setUTCDate(end.getUTCDate() + 1); // inclusive end
 
-    return DailyRecord.find({
+    const records = await DailyRecord.find({
       userId: new mongoose.Types.ObjectId(userId),
       date: { $gte: start, $lt: end },
     })
       .sort({ date: 1 })
       .lean();
+    return keepOwnedQuestionsOnly(userId, records as any[]);
   },
 
   /** Backfill day records from the user's existing DailySession history. */

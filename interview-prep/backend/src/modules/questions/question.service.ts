@@ -6,14 +6,15 @@ import { BadRequestError } from '../../common/filters/error-filter';
 // Question service
 export const questionService = {
   // Get question by ID
-  async getById(questionId: string): Promise<IQuestion | null> {
-    const question = await Question.findById(questionId).lean();
+  async getById(questionId: string, userId: string): Promise<IQuestion | null> {
+    const question = await Question.findOne({ _id:questionId, ownerUserId:new mongoose.Types.ObjectId(userId) }).lean();
     return (question as any) as IQuestion || null;
   },
 
   // Get questions by topic
   async getByTopic(
     topic: string,
+    userId: string,
     options: {
       subtopic?: string;
       difficulty?: string;
@@ -25,6 +26,7 @@ export const questionService = {
       isHidden: false,
       isDeprecated: false,
       qualityStatus: 'approved',
+      ownerUserId: new mongoose.Types.ObjectId(userId),
     };
 
     if (topic.toLowerCase() === 'coding') filter.isCoding = true;
@@ -51,6 +53,7 @@ export const questionService = {
   // Search questions
   async search(
     query: string,
+    userId: string,
     options: {
       topic?: string;
       difficulty?: string;
@@ -61,6 +64,7 @@ export const questionService = {
       isHidden: false,
       isDeprecated: false,
       qualityStatus: 'approved',
+      ownerUserId: new mongoose.Types.ObjectId(userId),
       $text: { $search: query },
     };
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { getOrCreateQuestionAnswer, TopicPracticeAnswer } from '../questions/answer.service';
 
-import { generatePersonalizedQuestions, generateCodingQuestions, reserveQuestion, exposedQuestionIds } from '../questions/personalized-generator';
+import { generatePersonalizedQuestions, generateCodingQuestions, reserveQuestion } from '../questions/personalized-generator';
 import { hasAI, hasFallbackAI } from '../../common/services/ai-provider';
 import mongoose from 'mongoose';
 import logger from '../../config/logger';
@@ -26,6 +26,28 @@ const SESSION_TYPE_TO_CALENDAR: Record<string, string> = {
   project: 'project', revision: 'revision', mock_interview: 'mock_interview',
   behavioral: 'behavioral', custom: 'custom',
 };
+
+function filterSessionToOwnedQuestions(session: any, userId: string) {
+  if (!session) return session;
+  let all: any[] = [];
+  for (const section of session.sections || []) {
+    section.questions = (section.questions || []).filter((item: any) =>
+      item?.questionId && typeof item.questionId === 'object' &&
+      String(item.questionId.ownerUserId || '') === userId);
+    section.totalQuestions = section.questions.length;
+    section.completedQuestions = section.questions.filter((item: any) =>
+      ['answered', 'reviewed', 'skipped'].includes(item.status)).length;
+    all = all.concat(section.questions);
+  }
+  const answered = all.filter((item) => item.status === 'answered');
+  session.totalQuestions = all.length;
+  session.completedQuestions = all.filter((item) => ['answered', 'reviewed', 'skipped'].includes(item.status)).length;
+  session.correctQuestions = answered.filter((item) => (item.finalScore || 0) >= 0.7).length;
+  session.averageScore = answered.length
+    ? answered.reduce((sum, item) => sum + (item.finalScore || 0), 0) / answered.length
+    : 0;
+  return session;
+}
 
 /**
  * Attach every question in a session to the user's daily calendar record so
@@ -268,35 +290,8 @@ export const sessionService = {
       section.notes = undefined;
       if (planned.type === 'coding') {
         let codingFallbackError: string | undefined;
-        const ownedSessions = await DailySession.find({ userId }).select('_id').lean();
-        const prior = await SessionQuestion.find({ sessionId:{ $in:ownedSessions.map(s=>s._id) },
-          'questionSnapshot.isCoding':true }).select('questionId').lean();
-        const priorQuestions = await Question.find({ _id:{ $in:prior.map(p=>p.questionId) } }).select('sourceId').lean();
-        // Also exclude anything already exposed via QuestionExposure (skip/
-        // regenerate paths), so a skipped problem never resurfaces.
-        const exposed = await exposedQuestionIds(userId);
-        const bankSize = await mongoose.model('CodingProblem').countDocuments({});
-        const problemCandidates = await mongoose.model('CodingProblem').find({
-          isHidden:false,isDeprecated:false,isInterviewRelevant:true,
-          _id:{ $nin:priorQuestions.map(q=>q.sourceId).filter(Boolean) },
-        }).limit(needed + exposed.size).lean();
-        const problems = problemCandidates.filter((p:any)=>!exposed.has(String(p._id))).slice(0, needed);
-        for (const p of problems) {
-          // Canonicalize curated coding metadata; never execute arbitrary AI code.
-          const canonical = await Question.findOneAndUpdate({ sourceId:String(p._id), provenance:'CURATED' },
-            { $setOnInsert:{ question:p.title,topic:planned.topic,subtopic:(p.pattern || []).join(', ') || 'Algorithms',
-              concepts:p.tags || [], difficulty:String(p.difficulty || 'medium').toUpperCase(),
-              questionType:'CODING',archetype:'IMPLEMENTATION',provenance:'CURATED',qualityStatus:'approved',
-              isCoding:true,sourceId:String(p._id),sourceUrl:p.url,
-              codingProblem:{ description:p.description, constraints:p.constraints, examples:p.examples,
-                starterCode:Object.values(p.starterCode || {})[0], pattern:(p.pattern || []).join(', ') } } },
-            { upsert:true,new:true });
-          await add(canonical);
-        }
-        // The curated bank is the preferred source, but it is seeded data. When it
-        // cannot cover the quota (an unseeded install, or every candidate already
-        // served), fall back to AI so the user's coding count is honoured instead
-        // of leaving a hole in the day.
+        // Never serve shared CodingProblem rows. Generate and persist an
+        // account-owned question for this user instead.
         const stillNeeded = planned.count - section.totalQuestions;
         if (stillNeeded > 0) {
           try {
@@ -309,15 +304,12 @@ export const sessionService = {
           }
           if (section.totalQuestions < planned.count) {
             const aiConfigured = hasAI() || hasFallbackAI();
-            const sourceNote = bankSize === 0
-              ? 'The curated coding bank is empty. The backend seeds it at startup; check for the "Curated coding bank initialized" log.'
-              : `The curated bank supplied ${section.totalQuestions} of ${planned.count} requested questions; it has no more unseen matches.`;
             const aiNote = codingFallbackError
               ? `AI generation failed: ${codingFallbackError}`
               : aiConfigured
                 ? 'The configured AI provider returned no additional usable questions.'
                 : 'No AI provider is configured; set AI_API_KEY and AI_MODEL (or fallback provider settings) in the backend environment.';
-            section.notes = `Only ${section.totalQuestions} of ${planned.count} coding questions could be generated. ${sourceNote} ${aiNote} No previously seen problems were repeated.`;
+            section.notes = `Only ${section.totalQuestions} of ${planned.count} coding questions could be generated. ${aiNote} No previously seen problems were repeated.`;
           }
         }
       } else {
@@ -337,6 +329,7 @@ export const sessionService = {
       await session.save();
 
       async function add(question:any) {
+        if (String(question.ownerUserId ?? '') !== String(userId)) return;
         if (!await reserveQuestion(userId,sessionId,question)) return;
         const mapped = await SessionQuestion.create({
           sessionId,sectionId:section!._id,questionId:question._id,order:section!.questions.length,status:'pending',
@@ -370,7 +363,7 @@ export const sessionService = {
       const questionHistory = await QuestionHistoryModel.findOne({ _id: revision.questionHistoryId, userId });
       if (!questionHistory) continue;
 
-      const question = await Question.findById(revision.originalQuestionId);
+      const question = await Question.findOne({ _id:revision.originalQuestionId, ownerUserId:new mongoose.Types.ObjectId(userId) });
       if (!question) continue;
 
       const sessionQuestion = await SessionQuestion.create({
@@ -427,10 +420,11 @@ export const sessionService = {
       .populate({
         path: 'sections.questions',
         model: 'SessionQuestion',
+        populate: { path: 'questionId', model: 'Question', select: 'ownerUserId' },
       })
       .lean();
 
-    return session || null;
+    return filterSessionToOwnedQuestions(session, userId);
   },
 
   // Get session by ID
@@ -443,10 +437,11 @@ export const sessionService = {
       .populate({
         path: 'sections.questions',
         model: 'SessionQuestion',
+        populate: { path: 'questionId', model: 'Question', select: 'ownerUserId' },
       })
       .lean();
 
-    return session || null;
+    return filterSessionToOwnedQuestions(session, userId);
   },
 
   /**
@@ -459,7 +454,7 @@ export const sessionService = {
     if (!session) throw new NotFoundError('Session not found');
     const mapped = await SessionQuestion.findOne({ _id: mappingId, sessionId });
     if (!mapped) throw new NotFoundError('Question not found in session');
-    const question = await Question.findById(mapped.questionId);
+    const question = await Question.findOne({ _id: mapped.questionId, ownerUserId: new mongoose.Types.ObjectId(userId) });
     if (!question) throw new NotFoundError('Question not found');
     if (mapped.status === 'pending') {
       await SessionQuestion.updateOne({ _id: mapped._id, status: 'pending' }, { $set: { status: 'presented' } });
@@ -469,6 +464,10 @@ export const sessionService = {
   async markQuestionReviewed(sessionId: string, mappingId: string, userId: string): Promise<number> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');
+    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean();
+    if (!existing || !await Question.exists({ _id:existing.questionId, ownerUserId:new mongoose.Types.ObjectId(userId) })) {
+      throw new NotFoundError('Question not found in session');
+    }
     const mapped = await SessionQuestion.findOneAndUpdate({ _id:mappingId, sessionId,
       status:'presented' }, { $set:{ status:'reviewed' } }, { new:true });
     if (!mapped && !await SessionQuestion.exists({ _id:mappingId, sessionId })) {
@@ -488,6 +487,10 @@ export const sessionService = {
   async skipQuestion(sessionId: string, mappingId: string, userId: string): Promise<any> {
     const session = await DailySession.findOne({ _id:sessionId, userId, isDeleted:false });
     if (!session) throw new NotFoundError('Session not found');
+    const existing = await SessionQuestion.findOne({ _id:mappingId, sessionId }).select('questionId').lean();
+    if (!existing || !await Question.exists({ _id:existing.questionId, ownerUserId:new mongoose.Types.ObjectId(userId) })) {
+      throw new NotFoundError('Question not found in session');
+    }
     const mapped = await SessionQuestion.findOneAndUpdate({ _id:mappingId, sessionId,
       status:{$in:['pending','presented']} }, { $set:{ status:'skipped' } }, { new:true });
     if (!mapped) {
@@ -545,6 +548,9 @@ export const sessionService = {
       throw new NotFoundError('Question not found in session');
     }
 
+    const question = await Question.findOne({ _id: sessionQuestion.questionId, ownerUserId: new mongoose.Types.ObjectId(userId) });
+    if (!question) throw new NotFoundError('Question not found in session');
+
     // Record answer
     sessionQuestion.answer = answer;
     sessionQuestion.answerTimeSeconds = Math.floor(
@@ -555,8 +561,6 @@ export const sessionService = {
     await sessionQuestion.save();
 
     // Load the full question (needed for reference answers, concepts, archetype)
-    const question = await Question.findById(sessionQuestion.questionId);
-
     // ---------------- AI answer evaluation ----------------
     let evaluation: EvaluationResult | null = null;
     try {

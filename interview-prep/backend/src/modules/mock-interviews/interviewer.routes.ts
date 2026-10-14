@@ -11,9 +11,14 @@ import { evaluateAnswer } from '../evaluation/answer-evaluation';
 import config from '../../config';
 const router=Router();
 router.use(authenticate);
-function publicInterview(interview:any) {
+async function publicInterview(interview:any, userId:string) {
   const plain=interview.toObject ? interview.toObject() : interview;
-  return {...plain,questions:plain.questions.map((q:any)=>({...q,evaluation:q.status==='answered'?q.evaluation:undefined}))};
+  const ownedIds = new Set((await Question.distinct('_id', {
+    _id: { $in: plain.questions.map((q:any)=>q.questionId) }, ownerUserId: new mongoose.Types.ObjectId(userId),
+  })).map(id=>String(id)));
+  const questions = plain.questions.filter((q:any)=>ownedIds.has(String(q.questionId)));
+  return {...plain,questions:questions.map((q:any)=>({...q,evaluation:q.status==='answered'?q.evaluation:undefined})),
+    totalQuestions:questions.length,answeredQuestions:questions.filter((q:any)=>q.status==='answered').length};
 }
 router.post('/start',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const data=z.object({topic:z.string().min(1).max(100),type:z.enum(['technical','system_design','project_deep_dive','behavioral','leadership','custom']).default('technical')}).parse(req.body);
@@ -24,12 +29,12 @@ router.post('/start',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const interview=await MockInterview.create({_id:id,userId:req.user!.id,type:data.type,title:data.topic,focusTopics:[data.topic],
     status:'in_progress',startedAt:new Date(),totalQuestions:1,questions:[{questionId:question._id,
       questionSnapshot:question.toObject ? question.toObject() : question,order:0,status:'asked',askedAt:new Date()}]});
-  res.status(201).json({success:true,data:publicInterview(interview)});
+  res.status(201).json({success:true,data:await publicInterview(interview,req.user!.id)});
 }));
 router.get('/:id([a-fA-F0-9]{24})',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const interview=await MockInterview.findOne({_id:req.params.id,userId:req.user!.id,isDeleted:false});
   if(!interview) throw new NotFoundError('Interview not found');
-  res.json({success:true,data:publicInterview(interview)});
+  res.json({success:true,data:await publicInterview(interview,req.user!.id)});
 }));
 router.post('/:id/answer',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const data=z.object({turn:z.number().int().min(0).max(19),answer:z.string().min(10).max(10000)}).parse(req.body);
@@ -39,7 +44,8 @@ router.post('/:id/answer',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   if(!interview) throw new ConflictError('Interview turn is unavailable or already processing');
   try {
     const turn=interview.questions[data.turn];
-    const question=await Question.findById(turn.questionId);
+      const question=await Question.findOne({ _id:turn.questionId, ownerUserId:req.user!.id });
+      if(!question) throw new NotFoundError('Question not found');
     const evaluation=await evaluateAnswer({userId:req.user!.id,question:turn.questionSnapshot.question,
       userAnswer:data.answer,concepts:turn.questionSnapshot.concepts,detailedAnswer:question?.detailedAnswer,
       topic:turn.questionSnapshot.topic});

@@ -17,7 +17,7 @@ router.post('/:sessionId/:mappingId', authenticate, asyncHandler(async(req:Authe
   if (!await DailySession.exists({ _id:req.params.sessionId,userId:req.user!.id })) throw new NotFoundError('Session not found');
   const mapped = await SessionQuestion.findOne({ _id:req.params.mappingId,sessionId:req.params.sessionId });
   if (!mapped) throw new NotFoundError('Question not found');
-  const question = await Question.findById(mapped.questionId);
+  const question = await Question.findOne({ _id:mapped.questionId, ownerUserId:req.user!.id });
   if (!question) throw new NotFoundError('Question not found');
   await QuestionFeedback.create({ userId:req.user!.id,sessionId:mapped.sessionId,questionId:question._id,...data });
   const history = await QuestionHistory.findOneAndUpdate({ userId:req.user!.id,questionId:question._id },{

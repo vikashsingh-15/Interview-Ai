@@ -20,8 +20,8 @@ router.get(
     const Question = mongoose.model('Question');
     const { topic, difficulty, limit } = req.query as any;
 
-    const filter: Record<string, any> = { isHidden: false, isDeprecated: false, qualityStatus: 'approved', 'practiceSource.kind': { $exists: false },
-      $or: [{ ownerUserId: { $exists: false }, provenance: 'CURATED' }, { ownerUserId: req.user.id }] };
+    const filter: Record<string, any> = { ownerUserId: new mongoose.Types.ObjectId(req.user.id),
+      isHidden: false, isDeprecated: false, qualityStatus: 'approved', 'practiceSource.kind': { $exists: false } };
     if (topic && typeof topic === 'string') {
       if (topic.toLowerCase() === 'coding') filter.isCoding = true;
       else {

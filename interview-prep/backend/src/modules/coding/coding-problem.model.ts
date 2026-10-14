@@ -42,6 +42,7 @@ export type ProblemPlatform = 'leetcode' | 'hackerrank' | 'codeforces' | 'atcode
 // Coding problem
 export interface ICodingProblem {
   _id: mongoose.Types.ObjectId;
+  ownerUserId?: mongoose.Types.ObjectId;
 
   // Problem info
   title: string;
@@ -93,6 +94,7 @@ export interface ICodingProblemDocument extends ICodingProblem, Document {}
 // Coding Problem Schema
 const codingProblemSchema = new Schema<ICodingProblem>(
   {
+    ownerUserId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     title: {
       type: String,
       required: true,

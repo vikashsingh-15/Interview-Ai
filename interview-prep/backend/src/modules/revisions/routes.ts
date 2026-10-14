@@ -18,16 +18,21 @@ router.get(
     if (!req.user) throw new ValidationError('Authentication required');
 
     const Revision = mongoose.model('Revision');
+    const Question = mongoose.model('Question');
+    const userId = new mongoose.Types.ObjectId(req.user.id);
     const due = await Revision.find({
-      userId: new mongoose.Types.ObjectId(req.user.id),
+      userId,
       status: { $in: ['pending', 'due'] },
       dueDate: { $lte: new Date() },
     })
       .sort({ dueDate: 1 })
       .limit(50)
       .lean();
+    const questionIds = due.map((revision: any) => revision.originalQuestionId);
+    const ownedIds = new Set((await Question.distinct('_id', { _id: { $in: questionIds }, ownerUserId: userId }))
+      .map((id: any) => String(id)));
 
-    res.json({ success: true, data: due });
+    res.json({ success: true, data: due.filter((revision: any) => ownedIds.has(String(revision.originalQuestionId))) });
   })
 );
 
@@ -64,10 +69,11 @@ router.get(
     // Reference answers for the reveal UI. Exclude model internals; keep the
     // fields the page renders.
     const questionIds = [...new Set(revisions.map((r) => String(r.originalQuestionId)))];
-    const questions = await Question.find({ _id: { $in: questionIds } })
+    const questions = await Question.find({ _id: { $in: questionIds }, ownerUserId: userId })
       .select('question detailedAnswer shortAnswer interviewAnswer concepts topic subtopic difficulty')
       .lean();
     const byId = new Map(questions.map((q) => [String(q._id), q]));
+    const ownedRevisions = revisions.filter((r: any) => byId.has(String(r.originalQuestionId)));
 
     const toEntry = (r: any) => {
       const q = byId.get(String(r.originalQuestionId));
@@ -86,9 +92,9 @@ router.get(
       };
     };
 
-    const dueNow = revisions.filter((r: any) => new Date(r.dueDate) <= now).map(toEntry);
+    const dueNow = ownedRevisions.filter((r: any) => new Date(r.dueDate) <= now).map(toEntry);
     const inBucket = (fromDays: number, toDays: number) =>
-      revisions.filter((r: any) => {
+      ownedRevisions.filter((r: any) => {
         const d = new Date(r.dueDate).getTime();
         return d > now.getTime() + fromDays * dayMs && d <= now.getTime() + toDays * dayMs;
       }).map(toEntry);

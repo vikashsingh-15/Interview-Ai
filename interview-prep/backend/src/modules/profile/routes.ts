@@ -226,10 +226,20 @@ router.get(
       .lean();
 
     const resolvedQuestionIds = await resolveQuestionIdsForRecords(req.user.id, records as any);
+    const candidateQuestionIds = (records as any[]).flatMap((record: any) => (record.entries || [])
+      .map((entry: any) => entry.metadata?.questionId || resolvedQuestionIds.get(`${record.dateKey}:${entry.title.trim().replace(/\s+/g, ' ').toLowerCase()}`))
+      .filter(Boolean));
+    const ownedQuestionIds = new Set((await mongoose.model('Question').find({
+      _id: { $in: candidateQuestionIds }, ownerUserId: new mongoose.Types.ObjectId(req.user.id),
+    }).distinct('_id')).map((id: any) => String(id)));
 
     const days = records.map((record: any) => {
-      const entries = (record.entries || []).filter((e: any) => e.type !== 'search');
-      const questions = entries.length || record.totals?.questions || 0;
+      const entries = (record.entries || []).filter((e: any) => {
+        if (e.type === 'search') return false;
+        const id = e.metadata?.questionId || resolvedQuestionIds.get(`${record.dateKey}:${e.title.trim().replace(/\s+/g, ' ').toLowerCase()}`);
+        return id && ownedQuestionIds.has(String(id));
+      });
+      const questions = entries.length;
       const answered = entries.filter(
         (e: any) => e.status === 'answered' || e.status === 'completed' || (e as any).knewAnswer
       ).length;
@@ -271,7 +281,7 @@ router.get(
           occurredAt: e.occurredAt,
         })),
       };
-    });
+    }).filter((day: any) => day.questions > 0);
 
     res.json({ success: true, data: { days, page, limit } });
   })

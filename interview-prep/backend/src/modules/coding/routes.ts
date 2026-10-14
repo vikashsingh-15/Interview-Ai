@@ -20,7 +20,7 @@ router.get(
     const CodingProblem = mongoose.model('CodingProblem');
     const { difficulty, pattern, limit } = req.query as any;
 
-    const filter: Record<string, any> = { isHidden: false, isDeprecated: false };
+    const filter: Record<string, any> = { ownerUserId: new mongoose.Types.ObjectId(req.user.id), isHidden: false, isDeprecated: false };
     if (difficulty) filter.difficulty = difficulty;
     if (pattern) filter.pattern = pattern;
 

@@ -219,12 +219,10 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
   const legacy = await QuestionHistory.find({ userId }).select('questionSnapshot.question').lean();
   const seenTexts = [...allExposure.map(e=>e.question),...legacy.map(h=>h.questionSnapshot.question)];
   const seenHashes = new Set(seenTexts.map(questionHash));
-  const visibility = { $or:[{ ownerUserId: { $exists:false }, provenance:'CURATED' },{ ownerUserId:userId }] };
-  // System-design plans may split into named focus areas (HLD, distributed
-  // systems), while the curated bank is grouped under the canonical topic.
-  // Pull the tagged design bank rather than silently yielding an empty section.
+  // Reuse only this user's saved questions. Shared curated questions remain
+  // available to backend seeding, but are never shown as personal practice.
   const bank = await Question.find({ ...(type === 'system_design' ? { isSystemDesign: true } : { topic }), qualityStatus:'approved', isHidden:false, isDeprecated:false,
-    ...visibility }).lean();
+    ownerUserId: new mongoose.Types.ObjectId(userId) }).lean();
   const available = bank.filter(q=>!seenHashes.has(questionHash(q.question)) &&
     !seenTexts.some(t=>nearDuplicate(t,q.question)) &&
     (context.difficulty === 'mixed' || q.difficulty === ({easy:'EASY',medium:'MEDIUM',hard:'HARD',extra_hard:'EXPERT'} as any)[context.difficulty]));
@@ -293,7 +291,7 @@ export async function generatePersonalizedQuestions(userId: string, topic: strin
     } catch(e:any) {
       if (e.code !== 11000) throw e;
       // Never reuse another user's private question after a global unique-hash collision.
-      saved = await Question.findOne({ normalizedHash, ...visibility });
+      saved = await Question.findOne({ normalizedHash, ownerUserId:new mongoose.Types.ObjectId(userId) });
     }
     if (!saved) { note('persist_failed'); return; }
     if (relaxed) note('accepted_relaxed');
