@@ -340,16 +340,25 @@ export const resumeService = {
       return null;
     }
 
+    // Older resume records may have versions but no currentVersionId. Recover
+    // the latest owned version so reset/reuse can still rebuild its profile.
+    const currentVersionId = resume.currentVersionId?._id || resume.currentVersionId || resume.versions?.[resume.versions.length - 1];
+    if (currentVersionId && !resume.currentVersionId) {
+      resume.currentVersionId = currentVersionId;
+      await Resume.updateOne({ _id: resume._id, userId, isDeleted: false }, { $set: { currentVersionId } });
+    }
+    const currentVersion = resume.currentVersionId || (currentVersionId ? await ResumeVersion.findById(currentVersionId).lean() : null);
+
     // Get latest resume profile
     let profile = await ResumeProfile.findOne({
       userId: new mongoose.Types.ObjectId(userId),
-      resumeVersionId: resume.currentVersionId?._id,
+      resumeVersionId: currentVersionId,
     });
 
     // Profile reset intentionally retains uploaded resume files. Rebuild the
     // parsed profile on demand so onboarding can reuse the saved resume.
-    if (!profile && resume.currentVersionId?._id) {
-      const version = await ResumeVersion.findById(resume.currentVersionId._id);
+    if (!profile && currentVersionId) {
+      const version = await ResumeVersion.findById(currentVersionId);
       if (version) {
         profile = await ResumeProfile.create({
           userId: new mongoose.Types.ObjectId(userId),
@@ -371,12 +380,12 @@ export const resumeService = {
         name: resume.name,
         targetRole: resume.targetRole,
         isActive: resume.isActive,
-        currentVersionId: resume.currentVersionId?._id,
+        currentVersionId,
         versions: resume.versions,
         uploadDate: resume.uploadDate,
         totalVersions: resume.totalVersions,
       },
-      currentVersion: resume.currentVersionId,
+      currentVersion,
       profile,
     };
   },
