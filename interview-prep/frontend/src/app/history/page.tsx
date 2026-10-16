@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -42,7 +43,7 @@ function formatDateKey(dateKey: string): string {
 }
 
 export default function HistoryPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [days, setDays] = useState<PastQuestionDay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +120,9 @@ export default function HistoryPage() {
     days.length > 0
       ? Math.round(days.reduce((sum, d) => sum + d.performanceScore, 0) / days.length)
       : 0;
+
+  if (authLoading) return <SignInPrompt pageName="your history" returnTo="/history" isLoading />;
+  if (!isAuthenticated) return <SignInPrompt pageName="your history" returnTo="/history" />;
 
   return (
     <div className="min-h-screen bg-brand-background">

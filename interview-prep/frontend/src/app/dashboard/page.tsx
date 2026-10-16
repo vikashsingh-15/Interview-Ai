@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { TrackerSection } from '@/components/tracker/TrackerSection';
 import { PlannerSection } from '@/components/planner/PlannerSection';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -54,10 +55,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!isAuthenticated) {
-      router.replace('/login');
-      return;
-    }
+    if (!isAuthenticated) return;
 
     let cancelled = false;
     const fetchData = async () => {
@@ -101,6 +99,9 @@ export default function DashboardPage() {
     fetchData();
     return () => { cancelled = true; };
   }, [isAuthenticated, authLoading, router]);
+
+  if (authLoading) return <SignInPrompt pageName="your dashboard" returnTo="/dashboard" isLoading />;
+  if (!isAuthenticated) return <SignInPrompt pageName="your dashboard" returnTo="/dashboard" />;
 
   if (isLoading) {
     return (

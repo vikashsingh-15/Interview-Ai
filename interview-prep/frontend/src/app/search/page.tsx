@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -17,7 +18,7 @@ const SUGGESTED_QUERIES = [
 ];
 
 export default function SearchPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [query, setQuery] = useState('');
   const [includeScrapedContent, setIncludeScrapedContent] = useState(true);
   const [result, setResult] = useState<WebSearchResponse | null>(null);
@@ -66,6 +67,9 @@ export default function SearchPage() {
     e.preventDefault();
     runSearch(query);
   };
+
+  if (!authLoading && !isAuthenticated) return <SignInPrompt pageName="web search" returnTo="/search" />;
+  if (authLoading) return <SignInPrompt pageName="web search" returnTo="/search" isLoading />;
 
   return (
     <div className="min-h-screen bg-brand-background">

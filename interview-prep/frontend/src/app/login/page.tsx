@@ -10,7 +10,13 @@ export default function LoginPage() {
   const { isAuthenticated, isLoading } = useAuth();
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace('/dashboard');
+    if (!isLoading && isAuthenticated) {
+      const requestedPath = new URLSearchParams(window.location.search).get('next');
+      const destination = requestedPath?.startsWith('/') && !requestedPath.startsWith('//')
+        ? requestedPath
+        : '/dashboard';
+      router.replace(destination);
+    }
   }, [isAuthenticated, isLoading, router]);
 
   if (isLoading || isAuthenticated) {

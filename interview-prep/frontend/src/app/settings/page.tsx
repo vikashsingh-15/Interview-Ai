@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -100,7 +101,7 @@ const COUNT_FIELDS: Array<{
 ];
 
 export default function SettingsPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -209,6 +210,9 @@ export default function SettingsPage() {
       setIsResetting(false);
     }
   };
+
+  if (authLoading) return <SignInPrompt pageName="settings" returnTo="/settings" isLoading />;
+  if (!isAuthenticated) return <SignInPrompt pageName="settings" returnTo="/settings" />;
 
   if (isLoading) {
     return (

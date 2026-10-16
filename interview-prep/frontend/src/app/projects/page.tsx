@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -58,22 +59,11 @@ export default function ProjectsPage() {
   }, [authLoading, isAuthenticated]);
 
   if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-brand-background">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-secondary" />
-      </div>
-    );
+    return <SignInPrompt pageName="your projects" returnTo="/projects" isLoading />;
   }
 
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-brand-background px-4">
-        <Card className="max-w-md"><CardContent className="p-8 text-center">
-          <p className="text-brand-textSecondary">Sign in to see your resume projects and prepare to defend them in interviews.</p>
-          <Link href="/login" className="mt-4 inline-block text-brand-secondary hover:underline">Sign in</Link>
-        </CardContent></Card>
-      </div>
-    );
+    return <SignInPrompt pageName="your projects" returnTo="/projects" />;
   }
 
   return (

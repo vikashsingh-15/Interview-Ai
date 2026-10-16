@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { SignInPrompt } from '@/components/auth/SignInPrompt';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import api from '@/lib/api';
@@ -26,8 +27,8 @@ export default function ExperiencePage() {
       .catch(() => { if (active) setError('Could not load your work experience. Please try again.'); });
     return () => { active = false; };
   }, [user]);
-  if (isLoading) return <div className="p-8">Loading…</div>;
-  if (!user) return <div className="p-8"><Link href="/login">Sign in to see your work experience.</Link></div>;
+  if (isLoading) return <SignInPrompt pageName="your work experience" returnTo="/experience" isLoading />;
+  if (!user) return <SignInPrompt pageName="your work experience" returnTo="/experience" />;
   return <div className="min-h-screen bg-brand-background py-8 px-4"><div className="max-w-6xl mx-auto">
     <h1 className="text-2xl font-bold text-brand-primary">Your work experience</h1>
     <p className="my-4 text-brand-textSecondary">Prepare to explain your responsibilities, achievements and technical claims. Review and edit these facts in <Link href="/onboarding" className="text-brand-secondary underline">resume review</Link>.</p>
