@@ -119,7 +119,7 @@ export function aiFailureDetails(error: unknown) {
  * errors, or returns output `fn` cannot use (throw to trigger fallback).
  */
 export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCandidate) => Promise<T>,
-  preferredProvider?: string, context: { operation?:string; aiRequestId?:string } = {}):Promise<T> {
+  preferredProvider?: string, context: { operation?:string; aiRequestId?:string; timeoutMs?:number; retryCount?:number } = {}):Promise<T> {
   const all = aiProviderCandidates();
   // A caller can pin which provider serves this call, e.g. to give a fallback a
   // turn when the primary's output was technically valid but unusable.
@@ -139,7 +139,8 @@ export async function withAIFallback<T>(fn:(client:OpenAI, provider:AIProviderCa
       attempt:`${i + 1}/${candidates.length}` };
     try {
       logger.info('[AI_REQUEST] provider attempt', details);
-      const client = new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,timeout:config.ai.timeout,maxRetries:config.ai.retryCount});
+      const client = new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,
+        timeout:context.timeoutMs ?? config.ai.timeout,maxRetries:context.retryCount ?? config.ai.retryCount});
       const result = await fn(client, candidate);
       if (candidate.name !== config.ai.provider) setActiveProvider(candidate.name);
       logger.info('[AI_SUCCESS] provider attempt', { ...details, durationMs: Date.now() - attemptStarted });

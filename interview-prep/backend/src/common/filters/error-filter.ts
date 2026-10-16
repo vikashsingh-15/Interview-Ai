@@ -134,6 +134,11 @@ export function errorHandler(
     message = 'Invalid request data';
     code = 'VALIDATION_ERROR';
     isOperational = true;
+    const issues = Array.isArray((err as any).issues) ? (err as any).issues : [];
+    errors = Object.fromEntries(issues.slice(0, 20).map((issue: any, index: number) => [
+      issue.path?.length ? issue.path.join('.') : `request.${index + 1}`,
+      issue.message || 'Invalid value',
+    ]));
   }
   // Handle JSON parsing errors
   else if (err instanceof SyntaxError && (err as any).body) {

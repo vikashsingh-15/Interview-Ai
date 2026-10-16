@@ -48,7 +48,7 @@ export function extractJsonObject(content: string): unknown {
 
 export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
   userId: string; purpose: string; version: string; system: string; context: unknown; schema: T;
-  preferredProvider?: string;
+  preferredProvider?: string; timeoutMs?: number; retryCount?: number;
 }): Promise<StructuredAIResult<z.output<T>>> {
   if (!hasAnyAI()) throw new Error('AI is not configured. Set AI_API_KEY and AI_MODEL, or configure a complete fallback provider.');
   const day = new Date().toISOString().slice(0, 10);
@@ -76,7 +76,8 @@ export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
       if (!content || response.choices[0]?.finish_reason === 'length') throw new Error('AI returned empty or truncated output');
       const parsed = input.schema.parse(extractJsonObject(content));
       return { value: parsed, provider: candidate.name, model: candidate.model, tokens: response.usage?.total_tokens };
-    }, input.preferredProvider, { operation:input.purpose, aiRequestId:String(log._id) });
+    }, input.preferredProvider, { operation:input.purpose, aiRequestId:String(log._id),
+      timeoutMs:input.timeoutMs, retryCount:input.retryCount });
     await AIRequest.updateOne({ _id: log._id }, { status: 'completed',
       tokens, provider, model, durationMs: Date.now() - started });
     return { result: value, provider, model, fallbackUsed: provider !== config.ai.provider };
@@ -96,6 +97,7 @@ export async function structuredAIMeta<T extends z.ZodTypeAny>(input: {
 // Compatibility wrapper preserving the original return type.
 export async function structuredAI<T extends z.ZodTypeAny>(input: {
   userId: string; purpose: string; version: string; system: string; context: unknown; schema: T;
+  timeoutMs?: number; retryCount?: number;
 }): Promise<z.output<T>> {
   return (await structuredAIMeta(input)).result;
 }

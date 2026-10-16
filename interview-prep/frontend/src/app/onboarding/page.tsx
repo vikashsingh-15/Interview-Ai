@@ -75,7 +75,11 @@ export default function OnboardingPage() {
   },[user,isLoading]);
   async function act(action:()=>Promise<void>) {
     setBusy(true);setMessage('');
-    try { await action(); } catch(e:any) { setMessage(e.response?.data?.error?.message || 'Request failed; check your configuration and retry.'); }
+    try { await action(); } catch(e:any) {
+      const error=e.response?.data?.error;
+      const details=error?.errors && Object.entries(error.errors).map(([field,issue])=>`${field}: ${issue}`).join('; ');
+      setMessage(details ? `${error.message || 'Request failed'} — ${details}` : error?.message || 'Request failed; check your configuration and retry.');
+    }
     finally { setBusy(false); }
   }
   function updateEntry(kind:string,index:number,patch:any) {
@@ -85,16 +89,20 @@ export default function OnboardingPage() {
   async function generateAnswers(targetKind?:'experience'|'projects', targetIndex?:number, targetField?:string) {
     if (!facts) return;
     setGeneratingAnswers(true); setDraftMessage('Generating answer drafts…');
-    setFacts((previous:any)=>({...previous,
-      experience:previous.experience.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : value]))),
-      projects:previous.projects.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : staleDraft(value) ? '' : value]))),
-    }));
     try {
+      setFacts((previous:any)=>{
+        if (!previous || !Array.isArray(previous.experience) || !Array.isArray(previous.projects)) return previous;
+        return {...previous,
+          experience:previous.experience.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : value]))),
+          projects:previous.projects.map((item:any)=>Object.fromEntries(Object.entries(item).map(([key,value])=>[key,Array.isArray(value) && value.length===1 && staleDraft(value[0]) ? [] : staleDraft(value) ? '' : value]))),
+        };
+      });
       let generated=0, unsupported=0, eligibleFields=0;
       for (const kind of (targetKind ? [targetKind] : ['experience','projects']) as ('experience'|'projects')[]) {
-        for (let i=0;i<facts[kind].length;i++) {
-          if (targetIndex !== undefined && i!==targetIndex || facts[kind][i].isRemoved) continue;
-          const item=facts[kind][i];
+        const entries = Array.isArray(facts[kind]) ? facts[kind] : [];
+        for (let i=0;i<entries.length;i++) {
+          if (targetIndex !== undefined && i!==targetIndex || !entries[i] || entries[i].isRemoved) continue;
+          const item=entries[i];
           const fields=answerFields[kind].filter(field => (!targetField || field===targetField) && emptyAnswer(item[field]));
           if (!fields.length) continue;
           eligibleFields += fields.length;
@@ -102,11 +110,12 @@ export default function OnboardingPage() {
           const response=await api.post('/profile/onboarding/answer-drafts',{entryType:kind==='projects'?'project':'experience',entryIndex:i,
             entry:{name:item.name,description:item.description,company:item.company,role:item.role,technologies:item.technologies || [],
               responsibilities:(item.responsibilities || []).filter((v:string)=>!staleDraft(v)),achievements:(item.achievements || []).filter((v:string)=>!staleDraft(v)),technicalClaims:(item.technicalClaims || []).filter((v:string)=>!staleDraft(v))},questions});
-          const answers=response.data.data.answers || [];
+          const rawAnswers=response.data?.data?.answers;
+          const answers=Array.isArray(rawAnswers) ? rawAnswers.filter((answer:any)=>typeof answer?.id==='string' && typeof answer?.draft==='string') : [];
           const drafted = answers.filter((answer:any)=>fields.includes(answer.id) && answer.draft?.trim()).length;
           generated += drafted;
           unsupported += fields.length - drafted;
-          setFacts((previous:any)=>({...previous,[kind]:previous[kind].map((current:any,j:number)=> {
+          setFacts((previous:any)=>!previous || !Array.isArray(previous[kind]) ? previous : ({...previous,[kind]:previous[kind].map((current:any,j:number)=> {
             if(j!==i)return current;
             const updated={...current};
             for(const answer of answers) {
@@ -119,7 +128,7 @@ export default function OnboardingPage() {
         }
       }
       if (!eligibleFields) {
-        setDraftMessage((facts.experience.length || facts.projects.length)
+        setDraftMessage(((facts.experience || []).length || (facts.projects || []).length)
           ? 'All answer fields already have content. Clear a field if you want a new draft.'
           : 'Add a work experience or project before generating answer drafts.');
       } else {
@@ -197,6 +206,10 @@ export default function OnboardingPage() {
       <label className="block">Current role<input className={inputStyle} value={facts.currentRole || ''}
         onChange={e=>{setReviewed(false);setFacts({...facts,currentRole:e.target.value});}} /></label>
       <h3 className="font-semibold">Skills</h3>
+      {facts.skills.length > 0 && <button type="button" className="rounded border px-3 py-1.5 text-sm" onClick={()=>{
+        setReviewed(false);
+        setFacts((previous:any)=>({...previous,skills:previous.skills.map((skill:any)=>({...skill,isConfirmed:true,isRemoved:false}))}));
+      }}>Confirm all skills</button>}
       {facts.skills.map((skill:any,i:number)=><div key={i} className="flex flex-wrap gap-3 items-center">
         <input aria-label={'Skill '+(i+1)} className={inputStyle+' max-w-xs'} value={skill.name} onChange={e=>updateEntry('skills',i,{name:e.target.value})} />
         <label><input type="checkbox" checked={skill.isConfirmed && !skill.isRemoved} onChange={e=>updateEntry('skills',i,{isConfirmed:e.target.checked,isRemoved:false})} /> Confirm</label>
