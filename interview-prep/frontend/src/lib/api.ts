@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { reportClientError } from './client-error-reporting';
 
 const api = axios.create({ baseURL:'/api', withCredentials:true });
 export default api;
@@ -6,9 +7,9 @@ export default api;
 export const QUESTION_GENERATION_ERROR = "We couldn't generate interview questions right now. Please try again in a moment.";
 export function logQuestionGenerationError(operation: string, error: any): string {
   const response = error?.response;
-  const event = { operation, category: response ? `http_${response.status}` : error?.code === 'ECONNABORTED' ? 'timeout' : 'network_or_runtime', status: response?.status, code: error?.code, requestId: response?.headers?.['x-request-id'] || error?.config?.headers?.['X-Request-ID'] };
+  const event = { operation, category: 'question_generation_failure' as const, status: response?.status, code: error?.code, requestId: response?.headers?.['x-request-id'] || error?.config?.headers?.['X-Request-ID'] };
   console.error('[QUESTION_GENERATION_FAILURE]', event);
-  void fetch('/api/client-errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event), keepalive: true }).catch(() => undefined);
+  reportClientError({ ...event, message: response ? `Question generation returned HTTP ${response.status}` : error?.code === 'ECONNABORTED' ? 'Question generation timed out' : 'Question generation request failed' });
   return QUESTION_GENERATION_ERROR;
 }
 
@@ -32,8 +33,11 @@ api.interceptors.response.use(
     const method = error.config?.method?.toUpperCase();
     const url = error.config?.url;
     const status = error.response?.status;
-    console.error('[API_FAILURE]', { method, url, status: status || 'no-response', requestId: requestId || 'none' });
-    void fetch('/api/client-errors', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: `${method || 'UNKNOWN'} ${url || 'unknown'}`, category: status ? `http_${status}` : 'network_or_runtime', status, requestId: requestId || 'none' }), keepalive: true }).catch(() => undefined);
+    if (!String(url || '').includes('/client-errors')) {
+      console.error('[API_FAILURE]', { method, url, status: status || 'no-response', requestId: requestId || 'none' });
+      reportClientError({ category: 'api_failure', operation: `${method || 'UNKNOWN'} ${String(url || 'unknown').split('?')[0]}`,
+        status, code: error.code, requestId, message: status ? `API request returned HTTP ${status}` : error.code === 'ECONNABORTED' ? 'API request timed out' : 'API request failed without a response' });
+    }
     // Prefer the server's own id when present; the client id is a fallback so
     // even a response without a body can still be reported.
     if (requestId && error.response?.data && typeof error.response.data === 'object'

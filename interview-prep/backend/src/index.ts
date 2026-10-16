@@ -36,6 +36,7 @@ import calendarRoutes from './modules/calendar/routes';
 import trackerRoutes from './modules/tracker/routes';
 import plannerRoutes from './modules/planner/routes';
 import topicPracticeRoutes from './modules/topics/routes';
+import clientErrorRoutes from './modules/diagnostics/client-errors.routes';
 
 
 
@@ -177,6 +178,7 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/tracker', trackerRoutes);
 app.use('/api/planner', plannerRoutes);
 app.use('/api/topics', topicPracticeRoutes);
+app.use('/api/client-errors', clientErrorRoutes);
 
 // 404 handler
 app.use(notFoundHandler);
