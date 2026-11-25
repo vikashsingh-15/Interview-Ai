@@ -157,11 +157,27 @@ export const resumeService = {
       throw error;
     }
 
+    // Create the profile before publishing the version as current. If this
+    // fails, the previous resume remains intact and the staged file is removed.
+    let resumeProfile;
+    try {
+      resumeProfile = await ResumeProfile.create({
+        userId: new mongoose.Types.ObjectId(userId), resumeVersionId: resumeVersion._id,
+        versionNumber, skills: [], experience: [], projects: [], education: [], certifications: [],
+        parserVersion: '1.0.0', confidence: 0, extractedAt: new Date(), userModified: false,
+      });
+    } catch (error) {
+      await ResumeVersion.deleteOne({ _id: resumeVersion._id });
+      await resumeStorage.delete(storageKey);
+      if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
+      throw error;
+    }
     resume.versions.push(resumeVersion._id);
     resume.currentVersionId = resumeVersion._id;
     try {
       await resume.save();
     } catch (error) {
+      await ResumeProfile.deleteOne({ _id: resumeProfile._id });
       await ResumeVersion.deleteOne({ _id: resumeVersion._id });
       await resumeStorage.delete(storageKey);
       if (createdResume) await Resume.deleteOne({ _id: resume._id, versions: { $size: 0 } });
@@ -176,24 +192,12 @@ export const resumeService = {
     });
 
     // Create initial resume profile (will be parsed asynchronously)
-    const resumeProfile = await ResumeProfile.create({
-      userId: new mongoose.Types.ObjectId(userId),
-      resumeVersionId: resumeVersion._id,
-      versionNumber,
-      skills: [],
-      experience: [],
-      projects: [],
-      education: [],
-      certifications: [],
-      parserVersion: '1.0.0',
-      confidence: 0,
-      extractedAt: new Date(),
-      userModified: false,
-    });
-
     // Keep confirmation and interview preferences attached to this exact
     // resume version. Uploading an inactive resume cannot reset the active one.
-    if (resume.isActive) await this.getOrCreateInterviewProfile(userId, resumeProfile._id);
+    if (resume.isActive) {
+      try { await this.getOrCreateInterviewProfile(userId, resumeProfile._id); }
+      catch (error) { logger.warn('Interview profile initialization deferred', { userId, error: error instanceof Error ? error.message : String(error) }); }
+    }
 
     return {
       resumeVersion,

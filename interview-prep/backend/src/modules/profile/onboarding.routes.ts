@@ -16,11 +16,27 @@ import { hasAnyAI } from '../../common/services/ai-provider';
 import { resumeStorage } from '../../common/services/resume-storage';
 import { extractResumeText } from '../resume/resume-parser';
 import { resolveActiveResumeContext } from '../resume/resume-context.service';
+import JobPlan from './job-plan.model';
 
 const router = Router();
 router.use(authenticate);
+router.get('/job-plans', asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  res.json({success:true,data:await JobPlan.find({userId:req.user!.id}).sort({updatedAt:-1}).limit(100).lean()});
+}));
+router.patch('/job-plans/:id', asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  const {index,completed}=z.object({index:z.number().int().min(0).max(9),completed:z.boolean()}).parse(req.body);
+  const plan=await JobPlan.findOne({_id:req.params.id,userId:req.user!.id});
+  if(!plan || !plan.requirements[index]) throw new NotFoundError('Plan item not found');
+  plan.requirements[index].completed=completed;
+  await plan.save(); res.json({success:true,data:plan});
+}));
+router.delete('/job-plans/:id', asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  const plan=await JobPlan.findOneAndDelete({_id:req.params.id,userId:req.user!.id});
+  if(!plan) throw new NotFoundError('Plan not found');
+  res.json({success:true});
+}));
 router.post('/job-preparation', asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { description } = z.object({ description: z.string().trim().min(40).max(12000) }).parse(req.body);
+  const { description, title } = z.object({ description: z.string().trim().min(40).max(12000), title:z.string().trim().min(1).max(150).default('Job preparation') }).parse(req.body);
   const active = await resolveActiveResumeContext(req.user!.id);
   if (!active?.profile?.userModified) throw new BadRequestError('Review your resume before preparing for a job');
   const facts = active.profile;
@@ -36,7 +52,8 @@ router.post('/job-preparation', asyncHandler(async (req: AuthenticatedRequest, r
   const factsText=JSON.stringify({skills,experience,projects}).toLowerCase();
   const requirements=result.requirements.filter(item=>description.includes(item.jobQuote)).map(item=>({ ...item,
     resumeEvidence:item.resumeEvidence && factsText.includes(item.resumeEvidence.toLowerCase()) ? item.resumeEvidence : '' }));
-  res.json({success:true,data:{requirements}});
+  const plan=await JobPlan.create({userId:req.user!.id,title,description,requirements});
+  res.json({success:true,data:plan});
 }));
 const confirmation = { isConfirmed: z.boolean().default(false), isRemoved: z.boolean().default(false) };
 const skill = skillEntrySchema.extend(confirmation);

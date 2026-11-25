@@ -1,5 +1,5 @@
 'use client';
-import { useEffect,useState } from 'react';
+import { useEffect,useRef,useState } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
@@ -8,6 +8,8 @@ export default function MockInterviewPage() {
   const [topic,setTopic]=useState(''),[type,setType]=useState('technical'),[interview,setInterview]=useState<any>(null);
   const [answer,setAnswer]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
   const [restoring,setRestoring]=useState(true),[feedbackNotes,setFeedbackNotes]=useState<Record<number,string>>({});
+  const [draftStatus,setDraftStatus]=useState('');
+  const draftTimer=useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(()=>{if(!isLoading&&!user)router.replace('/login');},[user,isLoading,router]);
   useEffect(()=>{
     if(!user) return;
@@ -17,7 +19,7 @@ export default function MockInterviewPage() {
       if(saved) api.get(`/mock-interviews/${encodeURIComponent(saved)}`).then(res=>{
         if(active) setInterview(res.data.data);
       }).catch(()=>{ if(active) setMessage('Could not restore your interview. You can start a new one.'); }).finally(()=>{if(active)setRestoring(false);});
-      else setRestoring(false);
+      else api.get('/mock-interviews/active').then(res=>{if(active && res.data.data)setInterview(res.data.data);}).catch(()=>{if(active)setMessage('Could not restore an active interview.');}).finally(()=>{if(active)setRestoring(false);});
     } catch { setRestoring(false); }
     return ()=>{active=false;};
   },[user]);
@@ -28,15 +30,22 @@ export default function MockInterviewPage() {
   async function act(fn:()=>Promise<void>) {setBusy(true);setMessage('');try{await fn();}catch(e:any){setMessage(e.response?.data?.error?.message||'Interview is temporarily unavailable');}finally{setBusy(false);}}
   const turn=interview?.questions.findIndex((q:any)=>q.status==='asked') ?? -1;
   const draftKey=user && interview?._id && turn>=0 ? `mock-answer:${user.id}:${interview._id}:${turn}` : null;
+  const storedDraft=turn>=0 ? interview?.questions[turn]?.draft || '' : '';
   useEffect(()=>{
     if(!draftKey) { setAnswer(''); return; }
-    try { setAnswer(localStorage.getItem(draftKey) || ''); } catch { setAnswer(''); }
-  },[draftKey]);
+    try { setAnswer(localStorage.getItem(draftKey) ?? storedDraft); } catch { setAnswer(storedDraft); }
+  },[draftKey,storedDraft]);
+  useEffect(()=>()=>{if(draftTimer.current)clearTimeout(draftTimer.current);},[]);
   function updateAnswer(value:string) {
     setAnswer(value);
     try { if(draftKey) localStorage.setItem(draftKey,value); } catch { /* Storage may be unavailable. */ }
+    if(draftTimer.current) clearTimeout(draftTimer.current);
+    setDraftStatus('Saving draft…');
+    const id=interview?._id, currentTurn=turn;
+    draftTimer.current=setTimeout(()=>{api.put(`/mock-interviews/${id}/draft`,{turn:currentTurn,draft:value}).then(()=>setDraftStatus('Draft saved to your account')).catch(()=>setDraftStatus('Draft saved locally; account sync failed.'));},800);
   }
   async function submitAnswer() {
+    if(draftTimer.current) clearTimeout(draftTimer.current);
     const id=interview._id, submittedTurn=turn, submittedAnswer=answer, key=draftKey;
     try {
       const response=await api.post(`/mock-interviews/${id}/answer`,{turn:submittedTurn,answer:submittedAnswer});
@@ -80,6 +89,7 @@ export default function MockInterviewPage() {
       </section>)}
       {turn>=0?<form onSubmit={e=>{e.preventDefault();void act(submitAnswer);}}>
         <label>Your answer<textarea className="block w-full border rounded p-3" rows={8} minLength={10} required value={answer} onChange={e=>updateAnswer(e.target.value)} /></label>
+        <p className="text-sm" role="status">{draftStatus}</p>
         <button className="bg-blue-700 text-white rounded p-2 mt-3" disabled={busy}>Submit and continue</button>
       </form>:<div><p>Interview complete. Scores are coaching estimates, not a hiring prediction.</p><button className="mt-3 rounded border p-2" onClick={()=>{try { if(user) localStorage.removeItem(`mock-interview:${user.id}`); } catch { /* Storage may be unavailable. */ } setInterview(null);}}>Start another interview</button></div>}
     </>}

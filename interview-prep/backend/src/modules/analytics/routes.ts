@@ -4,6 +4,17 @@ import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth
 import { asyncHandler, ValidationError } from '../../common/filters/error-filter';
 
 const router = Router();
+router.get('/topics', authenticate, asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  const userId=new mongoose.Types.ObjectId(req.user!.id);
+  const QuestionHistory=mongoose.model('QuestionHistory');
+  const rows=await QuestionHistory.aggregate([
+    {$match:{userId,answerSubmittedAt:{$type:'date'},finalScore:{$type:'number'}}},
+    {$sort:{answerSubmittedAt:-1}},
+    {$group:{_id:'$questionSnapshot.topic',count:{$sum:1},average:{$avg:'$finalScore'},recent:{$push:{score:'$finalScore',date:'$answerSubmittedAt'}}}},
+    {$project:{count:1,average:1,recent:{$slice:['$recent',5]}}},{$sort:{count:-1}},{$limit:50},
+  ]);
+  res.json({success:true,data:rows});
+}));
 
 async function getPracticeStreak(userId: mongoose.Types.ObjectId): Promise<number> {
   const QuestionHistory = mongoose.model('QuestionHistory');

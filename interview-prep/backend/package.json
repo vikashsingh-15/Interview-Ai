@@ -17,6 +17,7 @@
     "migrate": "ts-node src/scripts/migrate.ts",
     "migrate:resume-storage": "ts-node src/scripts/migrate-resume-storage.ts",
     "migrate:multi-resume": "ts-node src/scripts/migrate-multi-resume-context.ts",
+    "migrate:question-index": "ts-node src/scripts/migrate-question-index.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

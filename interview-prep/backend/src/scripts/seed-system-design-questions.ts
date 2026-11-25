@@ -34,7 +34,7 @@ export async function seedSystemDesignQuestions():Promise<{ inserted:number; ski
       normalizedHash:hash, tags:['system-design','curated'],
     };
     try {
-      const result = await Question.updateOne({ normalizedHash:hash }, { $setOnInsert:question }, { upsert:true });
+      const result = await Question.updateOne({ normalizedHash:hash, ownerUserId:{$exists:false} }, { $setOnInsert:question }, { upsert:true });
       if (result.upsertedCount) inserted++; else skipped++;
     } catch (error:any) {
       // Multiple backend replicas may seed the same reference question on

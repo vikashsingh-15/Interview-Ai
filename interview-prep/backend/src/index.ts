@@ -188,11 +188,14 @@ app.use(errorHandler);
 
 // Database connection and server start
 export async function startServer() {
+  const startupStarted = Date.now();
   try {
     validateProductionConfig();
     // Connect to MongoDB
     await mongoose.connect(config.database.uri, config.database.options);
+    logger.info('Startup database connected', { module:'startup', durationMs:Date.now()-startupStarted });
     await ensureMultiResumeIndexes();
+    logger.info('Startup resume indexes checked', { module:'startup', durationMs:Date.now()-startupStarted });
     try {
       const seeded = await seedAllCodingProblems();
       logger.info('Curated coding bank initialized', seeded);
@@ -228,6 +231,7 @@ export async function startServer() {
 
     // Start server
     const server = app.listen(config.port, config.host, () => {
+      logger.info('Startup ready', { module:'startup', durationMs:Date.now()-startupStarted });
       logger.info(`Server running at http://${config.host}:${config.port}`);
       logger.info(`Environment: ${config.nodeEnv}`);
       logger.info(`API available at http://${config.host}:${config.port}/api`);

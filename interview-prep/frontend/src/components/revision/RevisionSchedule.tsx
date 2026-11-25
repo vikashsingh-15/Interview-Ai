@@ -40,6 +40,16 @@ export function RevisionSchedule() {
   const [failed, setFailed] = useState(false);
   const [openBucket, setOpenBucket] = useState<string | null>('dueNow');
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [actionError, setActionError] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function updateRevision(id:string,action:'postpone'|'understood') {
+    setBusy(id); setActionError('');
+    try { await api.patch(`/revisions/${id}`,{action,days:action==='postpone'?1:undefined});
+      const response=await api.get('/revisions/schedule'); setSchedule(response.data.data);
+    } catch { setActionError('Could not update this revision. Please try again.'); }
+    finally { setBusy(null); }
+  }
 
   useEffect(() => {
     api.get('/revisions/schedule')
@@ -82,6 +92,7 @@ export function RevisionSchedule() {
       <p className="text-sm text-brand-textSecondary mb-3">
         Weak answers resurface on a spaced schedule: +1, +7, +14 and +30 days. Reveal the model answer to check yourself.
       </p>
+      {actionError && <p role="alert" className="text-red-700">{actionError}</p>}
 
       {/* Bucket summary — 4-up on desktop, 2-up on mobile */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
@@ -126,6 +137,7 @@ export function RevisionSchedule() {
                   </span>
                 </div>
                 <p className="text-brand-text leading-relaxed mb-3">{entry.question}</p>
+                <div className="mb-3 flex gap-4 text-sm"><button disabled={busy===entry.revisionId} onClick={()=>void updateRevision(entry.revisionId,'postpone')} className="underline">Postpone one day</button><button disabled={busy===entry.revisionId} onClick={()=>void updateRevision(entry.revisionId,'understood')} className="underline">Mark understood</button></div>
 
                 {!revealed[entry.revisionId] ? (
                   <button

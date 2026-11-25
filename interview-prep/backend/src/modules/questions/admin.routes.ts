@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { authenticate, authorizeAdmin } from '../../common/middleware/auth';
 import { asyncHandler, NotFoundError } from '../../common/filters/error-filter';
@@ -19,5 +20,9 @@ router.patch('/questions/:id',asyncHandler(async(req,res)=>{
 }));
 router.get('/ai-usage',asyncHandler(async(req,res)=>{
   res.json({success:true,data:await AIRequest.find().sort({createdAt:-1}).limit(100).lean()});
+}));
+router.get('/evaluation-feedback',asyncHandler(async(req,res)=>{
+  const feedback=mongoose.model('EvaluationFeedback');
+  res.json({success:true,data:await feedback.find().sort({createdAt:-1}).limit(100).lean()});
 }));
 export default router;

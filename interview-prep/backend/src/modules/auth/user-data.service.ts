@@ -27,6 +27,7 @@ const ACTIVITY_MODELS = [
   'QuestionExposure',
   'QuestionGenerationPlan',
   'EvaluationFeedback',
+  'JobPlan',
 ] as const;
 
 export async function resetUserData(userId:string) {

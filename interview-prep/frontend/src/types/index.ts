@@ -3,6 +3,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  role?: 'user' | 'admin';
   isEmailVerified: boolean;
   preferences: UserPreferences;
   createdAt: string;

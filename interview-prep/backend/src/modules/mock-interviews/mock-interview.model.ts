@@ -60,6 +60,7 @@ export interface IMockInterview {
     status: 'pending' | 'asked' | 'answered' | 'skipped';
     askedAt?: Date;
     response?: string;
+    draft?: string;
     responseTimeSeconds?: number;
     evaluation?: any;
     followUpQuestions?: Array<{
@@ -176,6 +177,7 @@ const mockInterviewSchema = new Schema<IMockInterview>(
       },
       askedAt: Date,
       response: String,
+      draft: { type:String, maxlength:10000 },
       responseTimeSeconds: Number,
       evaluation: Schema.Types.Mixed,
       followUpQuestions: [{

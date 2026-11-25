@@ -434,7 +434,7 @@ questionSchema.index({ topic: 1, provenance: 1 });
 questionSchema.index({ interviewPriority: 1, difficulty: 1 });
 questionSchema.index({ isHidden: 1, isDeprecated: 1, qualityStatus: 1 });
 questionSchema.index({ provenance: 1, topic: 1 });
-questionSchema.index({ normalizedHash: 1 }, { unique: true, sparse: true });
+questionSchema.index({ ownerUserId: 1, normalizedHash: 1 }, { unique: true, partialFilterExpression: { normalizedHash: { $type: 'string' } }, name: 'owner_question_hash' });
 questionSchema.index({ sourceUrl: 1 }, { sparse: true });
 questionSchema.index({ 'codingProblem.pattern': 1 }, { sparse: true });
 questionSchema.index({ 'codingProblem.sourcePlatform': 1 }, { sparse: true });

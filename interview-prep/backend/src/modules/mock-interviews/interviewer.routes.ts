@@ -9,6 +9,7 @@ import { generatePersonalizedQuestions, buildQuestionPlan, reserveQuestion, near
 import { structuredAI } from '../../common/services/structured-ai';
 import { evaluateAnswer } from '../evaluation/answer-evaluation';
 import config from '../../config';
+import { hasAnyAI } from '../../common/services/ai-provider';
 const router=Router();
 const EvaluationFeedback = mongoose.model('EvaluationFeedback', new mongoose.Schema({
   userId:{type:mongoose.Schema.Types.ObjectId,required:true,index:true},
@@ -37,6 +38,16 @@ router.post('/start',asyncHandler(async(req:AuthenticatedRequest,res)=>{
     status:'in_progress',startedAt:new Date(),totalQuestions:1,questions:[{questionId:question._id,
       questionSnapshot:question.toObject ? question.toObject() : question,order:0,status:'asked',askedAt:new Date()}]});
   res.status(201).json({success:true,data:await publicInterview(interview,req.user!.id)});
+}));
+router.get('/active',asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const interview=await MockInterview.findOne({userId:req.user!.id,status:'in_progress',isDeleted:false}).sort({updatedAt:-1});
+  res.json({success:true,data:interview ? await publicInterview(interview,req.user!.id) : null});
+}));
+router.put('/:id/draft',asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const {turn,draft}=z.object({turn:z.number().int().min(0).max(19),draft:z.string().max(10000)}).parse(req.body);
+  const result=await MockInterview.updateOne({_id:req.params.id,userId:req.user!.id,status:'in_progress',isDeleted:false,[`questions.${turn}.status`]:'asked',turnInProgress:{$ne:true}},{$set:{[`questions.${turn}.draft`]:draft}});
+  if(!result.matchedCount) throw new ConflictError('This question is no longer available for editing');
+  res.json({success:true});
 }));
 router.get('/:id([a-fA-F0-9]{24})',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const interview=await MockInterview.findOne({_id:req.params.id,userId:req.user!.id,isDeleted:false});
@@ -68,10 +79,10 @@ router.post('/:id/answer',asyncHandler(async(req:AuthenticatedRequest,res)=>{
     const evaluation=await evaluateAnswer({userId:req.user!.id,question:turn.questionSnapshot.question,
       userAnswer:data.answer,concepts:turn.questionSnapshot.concepts,detailedAnswer:question?.detailedAnswer,
       topic:turn.questionSnapshot.topic});
-    turn.response=data.answer;turn.evaluation=evaluation;turn.status='answered';
+    turn.response=data.answer;turn.draft=undefined;turn.evaluation=evaluation;turn.status='answered';
     interview.answeredQuestions+=1;
     interview.weakAreas=[...new Set([...interview.weakAreas,...evaluation.keyConceptsToRevise])];
-    if(data.turn>=7 || !config.ai.apiKey) {
+    if(data.turn>=7 || !hasAnyAI()) {
       interview.status='completed';interview.completedAt=new Date();
     } else {
       const context=await buildQuestionPlan(req.user!.id,interview.title || '',1,interview.type);

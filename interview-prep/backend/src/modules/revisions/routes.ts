@@ -2,8 +2,17 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError } from '../../common/filters/error-filter';
+import { z } from 'zod';
 
 const router = Router();
+router.patch('/:id', authenticate, asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  const data=z.object({action:z.enum(['postpone','understood']),days:z.number().int().min(1).max(30).optional()}).parse(req.body);
+  const Revision=mongoose.model('Revision');
+  const update=data.action==='postpone' ? {$set:{dueDate:new Date(Date.now()+(data.days || 1)*86400000),status:'pending'}} : {$set:{status:'completed'}};
+  const result=await Revision.findOneAndUpdate({_id:req.params.id,userId:req.user!.id,status:{$in:['pending','due']}},update,{new:true});
+  if(!result) throw new ValidationError('Revision not found or already completed');
+  res.json({success:true,data:result});
+}));
 
 /**
  * Revision routes.
@@ -98,7 +107,7 @@ router.get(
         const d = new Date(r.dueDate).getTime();
         return d > now.getTime() + fromDays * dayMs && d <= now.getTime() + toDays * dayMs;
       }).map(toEntry);
-    const bucket7 = inBucket(1, 7);
+    const bucket7 = inBucket(0, 7);
     const bucket14 = inBucket(7, 14);
     const bucket30 = inBucket(14, 30);
 

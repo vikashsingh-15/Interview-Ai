@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { TrackerSection } from '@/components/tracker/TrackerSection';
 import { PlannerSection } from '@/components/planner/PlannerSection';
 import { SignInPrompt } from '@/components/auth/SignInPrompt';
+import { TopicAnalytics } from '@/components/features/TopicAnalytics';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -160,6 +161,8 @@ export default function DashboardPage() {
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <p className="mb-6 flex flex-wrap gap-4"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link><Link href="/job-preparation" className="text-blue-700 underline">Prepare for a job</Link></p>
+        {user?.role === 'admin' && <p className="mb-4"><Link className="text-blue-700 underline" href="/admin/feedback">Review evaluation feedback</Link></p>}
+        <TopicAnalytics />
         {dashboardError && <p role="alert" className="mb-6 text-sm text-red-600">{dashboardError}</p>}
         {/* Stats Grid */}
         <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">

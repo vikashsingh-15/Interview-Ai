@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { structuredAI } from '../../common/services/structured-ai';
 import OpenAI from 'openai';
-import { createAIClient, hasAI } from '../../common/services/ai-provider';
+import { createAIClient, hasAI, hasAnyAI } from '../../common/services/ai-provider';
 import logger from '../../config/logger';
 
 /**
@@ -83,11 +83,9 @@ export function getOpenAIClient(): OpenAI | null {
  * blocks on the evaluator.
  */
 export async function evaluateAnswer(input: EvaluationInput): Promise<EvaluationResult> {
-  const client = getClient();
-
-  if (client) {
+  if (hasAnyAI()) {
     try {
-      return await evaluateWithAI(client, input);
+      return await evaluateWithAI(input);
     } catch (err) {
       logger.warn('AI answer evaluation failed, falling back to heuristic', {
         error: (err as Error).message,
@@ -162,7 +160,7 @@ const RUBRIC_SYSTEM_PROMPT =
   'keyConceptsToRevise (string[]), strongerAnswerStructure (string), technicalGaps (string[]), ' +
   'evidence (array of {criterion, quote, explanation}); quotes must be exact excerpts from the candidate answer. Use an empty array if none apply.';
 
-async function evaluateWithAI(client: OpenAI, input: EvaluationInput): Promise<EvaluationResult> {
+async function evaluateWithAI(input: EvaluationInput): Promise<EvaluationResult> {
   const reference = input.detailedAnswer || input.expectedAnswer || '';
   const userPrompt = [
     `Question: ${input.question}`,
