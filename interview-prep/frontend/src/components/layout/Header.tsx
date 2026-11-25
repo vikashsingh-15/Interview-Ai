@@ -93,15 +93,6 @@ export function Header() {
               Search
             </Link>
             <Link
-              href="/settings"
-              className={cn(
-                "text-sm font-medium transition-colors",
-                isAuthenticated ? "text-brand-text" : "text-brand-textSecondary hover:text-brand-text"
-              )}
-            >
-              Settings
-            </Link>
-            <Link
               href="/projects"
               className={cn(
                 "text-sm font-medium transition-colors",
@@ -109,6 +100,15 @@ export function Header() {
               )}
             >
               Projects
+            </Link>
+            <Link
+              href="/settings"
+              className={cn(
+                "text-sm font-medium transition-colors",
+                isAuthenticated ? "text-brand-text" : "text-brand-textSecondary hover:text-brand-text"
+              )}
+            >
+              Settings
             </Link>
           </div>
 

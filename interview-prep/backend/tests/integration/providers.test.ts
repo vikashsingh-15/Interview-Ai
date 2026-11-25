@@ -34,6 +34,24 @@ const candidate={
   detailedAnswer:'Associate each request with a generation identifier that increments on every fetch. Apply a response only if its generation matches the latest request, because older responses must never overwrite newer state. Abort obsolete requests with an abort controller where supported, and keep loading, error and data transitions independent so a failed retry cannot blank a rendered list. In large tables, combine this with cancellation on unmount and a small cache keyed by query parameters to avoid redundant fetches.',
   estimatedAnswerTimeSeconds:180,factIds:[0],framing:'hypothetical',
 };
+test('provider status lists all configured slots and checks only the selected model',async()=>{
+  const original={primary:{provider:config.ai.provider,apiKey:config.ai.apiKey,model:config.ai.model,customBaseURL:config.ai.customBaseURL},fallback:{...config.ai.fallback},fallback2:{...config.ai.fallback2},fallback3:{...config.ai.fallback3}};
+  try {
+    Object.assign(config.ai,{provider:'openrouter',apiKey:'fixture',model:'primary-model'});
+    config.ai.fallback={provider:'gemini',apiKey:'fixture',model:'second-model',customBaseURL:''};
+    config.ai.fallback2={provider:'openai',apiKey:'fixture',model:'third-model',customBaseURL:''};
+    config.ai.fallback3={provider:'tokenrouter',apiKey:'fixture',model:'fourth-model',customBaseURL:''};
+    const cookie=config.auth.cookieName+'='+await createSession(userId);
+    const status=await request(app).get('/api/profile/ai-status').set('Cookie',cookie);
+    expect(status.status).toBe(200);
+    expect(status.body.data.providers.map((item:any)=>item.model)).toEqual(['primary-model','second-model','third-model','fourth-model']);
+    expect(JSON.stringify(status.body)).not.toContain('fixture');
+    mockCreate.mockResolvedValueOnce({choices:[{message:{content:'OK'}}]});
+    const result=await request(app).post('/api/profile/ai-status/check').set('Cookie',cookie).send({slot:3});
+    expect(result.body.data).toMatchObject({slot:3,model:'third-model',status:'working'});
+    expect(mockCreate.mock.calls.at(-1)[0].model).toBe('third-model');
+  } finally { Object.assign(config.ai,original.primary,{fallback:original.fallback,fallback2:original.fallback2,fallback3:original.fallback3}); }
+});
 beforeAll(async()=>{
   db=await MongoMemoryServer.create();await mongoose.connect(db.getUri());
   await Promise.all(Object.values(mongoose.models).map(m=>m.init()));

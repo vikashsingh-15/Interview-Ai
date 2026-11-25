@@ -2,7 +2,9 @@ import mongoose from 'mongoose';
 import { Router } from 'express';
 import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth';
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
-import { hasAnyAI, hasFallbackAI, getActiveProvider } from '../../common/services/ai-provider';
+import { hasAnyAI, hasFallbackAI, getActiveProvider, aiProviderCandidates, aiFailureDetails } from '../../common/services/ai-provider';
+import OpenAI from 'openai';
+import rateLimit from 'express-rate-limit';
 import { buildDailyPlan } from './daily-plan';
 import aiConfig from '../../config';
 import logger from '../../config/logger';
@@ -11,6 +13,8 @@ import { resolveQuestionIdsForRecords } from '../calendar/calendar.service';
 import { resolveActiveInterviewProfile } from '../resume/resume-context.service';
 
 const router = Router();
+const providerCheckLimiter = rateLimit({windowMs: 15 * 60 * 1000, max: 8, standardHeaders:true, legacyHeaders:false,
+  keyGenerator:req => (req as AuthenticatedRequest).user?.id || req.ip || 'unknown'});
 
 const VALID_DIFFICULTIES: DifficultyChoice[] = ['easy', 'medium', 'hard', 'extra_hard', 'mixed'];
 
@@ -177,6 +181,11 @@ router.get(
         // The key itself is never exposed, only whether one is present.
         hasApiKey: Boolean(aiConfig.ai.apiKey),
         activeProvider: getActiveProvider(),
+        providers: [aiConfig.ai, aiConfig.ai.fallback, aiConfig.ai.fallback2, aiConfig.ai.fallback3]
+          .map((entry,index) => ({slot:index+1,provider:entry.provider,model:entry.model,
+            configured:Boolean(entry.apiKey && entry.model && entry.provider),
+            hasApiKey:Boolean(entry.apiKey), enabled:aiProviderCandidates().some(candidate=>candidate.slot===index+1)}))
+          .filter(entry=>entry.hasApiKey || entry.model),
         fallback: {
           configured: hasFallbackAI(),
           provider: aiConfig.ai.fallback.provider,
@@ -198,6 +207,24 @@ router.get(
     });
   })
 );
+
+router.post('/ai-status/check', authenticate, providerCheckLimiter, asyncHandler(async (req:AuthenticatedRequest,res)=>{
+  const slot=Number(req.body?.slot);
+  if(!Number.isInteger(slot) || slot<1 || slot>4) throw new ValidationError('Select a configured provider');
+  const candidate=aiProviderCandidates().find(item=>item.slot===slot);
+  if(!candidate) throw new ValidationError('Provider is not configured');
+  const checkedAt=new Date().toISOString();
+  const started=Date.now();
+  try {
+    const client=new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,timeout:20000,maxRetries:0});
+    const result=await client.chat.completions.create({model:candidate.model,messages:[{role:'user',content:'Reply with OK.'}],max_tokens:32});
+    if(!result.choices[0]?.message?.content?.trim()) throw new Error('Empty response');
+    res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'working',checkedAt,durationMs:Date.now()-started}});
+  } catch(error) {
+    const details=aiFailureDetails(error);
+    res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'failed',checkedAt,durationMs:Date.now()-started,reason:details.reason,httpStatus:details.status}});
+  }
+}));
 
 /**
  * GET /api/profile/past-questions?limit=&page=

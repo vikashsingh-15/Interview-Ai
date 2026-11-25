@@ -50,6 +50,7 @@ const DIFFICULTY_OPTIONS: Array<{
 ];
 
 interface AIStatus {
+  providers: Array<{slot:number;provider:string;model:string;configured:boolean;enabled:boolean}>;
   configured: boolean;
   provider: string;
   model: string;
@@ -110,6 +111,16 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [checkingSlot, setCheckingSlot] = useState<number | null>(null);
+  const [checks, setChecks] = useState<Record<number,{provider:string;model:string;status:string;checkedAt:string;reason?:string;httpStatus?:number}>>({});
+  const [checkError, setCheckError] = useState('');
+  const checkProvider = async (slot:number) => {
+    setCheckingSlot(slot); setCheckError('');
+    try { const response=await api.post('/profile/ai-status/check',{slot},{timeout:25000});
+      setChecks(previous=>({...previous,[slot]:response.data.data}));
+    } catch (err:any) { setCheckError(err.response?.status===429 ? 'Too many checks. Try again later.' : 'The check could not be completed. Try again.'); }
+    finally { setCheckingSlot(null); }
+  };
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [isResetting, setIsResetting] = useState(false);
@@ -364,43 +375,21 @@ export default function SettingsPage() {
         {aiStatus && (
           <Card className="mt-6">
             <CardHeader>
-              <CardTitle>Question generation status</CardTitle>
+              <CardTitle>AI providers and models</CardTitle>
             </CardHeader>
             <CardContent>
-              <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-brand-textSecondary">Configured provider</dt>
-                  <dd className="font-medium text-brand-primary text-right">
-                    {aiStatus.provider} / {aiStatus.model || 'no model set'}
-                  </dd>
-                </div>
-                {aiStatus.lastSuccessful && <div className="flex justify-between gap-4 sm:col-span-2"><dt className="text-brand-textSecondary">Last successful request</dt><dd className="font-medium text-brand-primary text-right">{aiStatus.lastSuccessful.provider} / {aiStatus.lastSuccessful.model}</dd></div>}
-                <div className="flex justify-between gap-4">
-                  <dt className="text-brand-textSecondary">API key</dt>
-                  <dd className="font-medium text-brand-primary text-right">
-                    {aiStatus.hasApiKey ? 'configured' : 'missing'}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="text-brand-textSecondary">Fallback provider</dt>
-                  <dd className="font-medium text-brand-primary text-right">
-                    {aiStatus.fallback.configured
-                      ? `${aiStatus.fallback.provider} / ${aiStatus.fallback.model}`
-                      : 'not configured'}
-                  </dd>
-                </div>
-                {aiStatus.activeProvider && (
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-brand-textSecondary">Currently serving</dt>
-                    <dd className="font-medium text-brand-primary text-right">{aiStatus.activeProvider}</dd>
-                  </div>
-                )}
-              </dl>
-              <p className="mt-3 text-xs text-brand-textSecondary">
-                A fallback provider takes over automatically when the primary is rate-limited,
-                unreachable, or returns unusable output. Set AI_FALLBACK_PROVIDER,
-                AI_FALLBACK_API_KEY and AI_FALLBACK_MODEL in the backend .env to enable one.
-              </p>
+              <p className="mb-3 text-sm text-brand-textSecondary">Providers are tried in order. A check sends a small request to that exact model and may use your provider quota.</p>
+              <div className="space-y-3">{aiStatus.providers?.length ? aiStatus.providers.map(item=>{
+                const previous=checks[item.slot];
+                const result=previous?.model===item.model && previous?.provider===item.provider ? previous : undefined;
+                return <div key={item.slot} className="rounded-lg border border-brand-border p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{item.slot===1 ? 'Primary' : `Fallback ${item.slot-1}`}: {item.provider} / {item.model || 'No model set'}</p><p className="text-brand-textSecondary">{!item.configured ? 'Incomplete configuration' : !item.enabled ? 'Duplicate configuration; skipped' : result ? `${result.status === 'working' ? 'Responded successfully' : `Check failed: ${result.reason || 'request error'}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`} · ${new Date(result.checkedAt).toLocaleString()}` : 'Configured · not checked'}</p></div>
+                  <Button size="sm" variant="secondary" disabled={!item.enabled || checkingSlot!==null} onClick={()=>void checkProvider(item.slot)}>{checkingSlot===item.slot ? 'Checking…' : 'Check model'}</Button></div>
+                </div>;
+              }) : <p className="text-sm">No AI providers are configured.</p>}</div>
+              {checkError && <p role="alert" className="mt-3 text-sm text-red-600">{checkError}</p>}
+              {aiStatus.lastSuccessful && <p className="mt-3 text-xs text-brand-textSecondary">Your last successful AI request: {aiStatus.lastSuccessful.provider} / {aiStatus.lastSuccessful.model} · {new Date(aiStatus.lastSuccessful.at).toLocaleString()}</p>}
+              <p className="mt-2 text-xs text-brand-textSecondary">Settings show the backend's current configuration. Restart or redeploy the backend after changing environment variables. A successful check confirms a response at that time; it does not guarantee future availability.</p>
             </CardContent>
           </Card>
         )}
