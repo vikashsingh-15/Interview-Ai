@@ -19,7 +19,7 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, isLoading, router]);
 
-  if (isLoading || isAuthenticated) {
+  if (isAuthenticated) {
     return <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-brand-background" role="status" aria-label="Checking your sign-in"><div className="h-10 w-10 animate-spin rounded-full border-b-2 border-brand-secondary" /></main>;
   }
 

@@ -33,7 +33,8 @@ api.interceptors.response.use(
     const method = error.config?.method?.toUpperCase();
     const url = error.config?.url;
     const status = error.response?.status;
-    if (!String(url || '').includes('/client-errors')) {
+    const expectedSignedOut = url === '/auth/me' && status === 401;
+    if (!expectedSignedOut && !String(url || '').includes('/client-errors')) {
       console.error('[API_FAILURE]', { method, url, status: status || 'no-response', requestId: requestId || 'none' });
       reportClientError({ category: 'api_failure', operation: `${method || 'UNKNOWN'} ${String(url || 'unknown').split('?')[0]}`,
         status, code: error.code, requestId, message: status ? `API request returned HTTP ${status}` : error.code === 'ECONNABORTED' ? 'API request timed out' : 'API request failed without a response' });

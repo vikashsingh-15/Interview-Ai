@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const response = await api.get('/auth/me');
+        const response = await api.get('/auth/me', { timeout: 15000 });
         setUser(response.data.data);
       } catch (error) {
         // Not authenticated or session expired
@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Refresh user data
   const refreshUser = useCallback(async () => {
     try {
-      const response = await api.get('/auth/me');
+      const response = await api.get('/auth/me', { timeout: 15000 });
       setUser(response.data.data);
     } catch (error) {
       setUser(null);
