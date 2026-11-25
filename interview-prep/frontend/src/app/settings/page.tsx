@@ -114,12 +114,20 @@ export default function SettingsPage() {
   const [checkingSlot, setCheckingSlot] = useState<number | null>(null);
   const [checks, setChecks] = useState<Record<number,{provider:string;model:string;status:string;checkedAt:string;reason?:string;httpStatus?:number}>>({});
   const [checkError, setCheckError] = useState('');
+  const [checkingAll, setCheckingAll] = useState(false);
   const checkProvider = async (slot:number) => {
     setCheckingSlot(slot); setCheckError('');
     try { const response=await api.post('/profile/ai-status/check',{slot},{timeout:25000});
       setChecks(previous=>({...previous,[slot]:response.data.data}));
-    } catch (err:any) { setCheckError(err.response?.status===429 ? 'Too many checks. Try again later.' : 'The check could not be completed. Try again.'); }
+      return true;
+    } catch (err:any) { setCheckError(err.response?.status===429 ? 'Too many checks. Try again later.' : 'The check could not be completed. Try again.'); return false; }
     finally { setCheckingSlot(null); }
+  };
+  const checkAllProviders = async () => {
+    if (!aiStatus) return;
+    setCheckingAll(true);
+    try { for (const provider of aiStatus.providers.filter(item=>item.enabled)) if (!await checkProvider(provider.slot)) break; }
+    finally { setCheckingAll(false); }
   };
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState('');
@@ -379,17 +387,18 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <p className="mb-3 text-sm text-brand-textSecondary">Providers are tried in order. A check sends a small request to that exact model and may use your provider quota.</p>
+              <Button size="sm" variant="secondary" className="mb-3" disabled={checkingAll || checkingSlot!==null || !aiStatus.providers?.some(item=>item.enabled)} onClick={()=>void checkAllProviders()}>{checkingAll ? 'Checking providers…' : 'Check all providers'}</Button>
               <div className="space-y-3">{aiStatus.providers?.length ? aiStatus.providers.map(item=>{
                 const previous=checks[item.slot];
                 const result=previous?.model===item.model && previous?.provider===item.provider ? previous : undefined;
                 return <div key={item.slot} className="rounded-lg border border-brand-border p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{item.slot===1 ? 'Primary' : `Fallback ${item.slot-1}`}: {item.provider} / {item.model || 'No model set'}</p><p className="text-brand-textSecondary">{!item.configured ? 'Incomplete configuration' : !item.enabled ? 'Duplicate configuration; skipped' : result ? `${result.status === 'working' ? 'Responded successfully' : `Check failed: ${result.reason || 'request error'}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`} · ${new Date(result.checkedAt).toLocaleString()}` : 'Configured · not checked'}</p></div>
-                  <Button size="sm" variant="secondary" disabled={!item.enabled || checkingSlot!==null} onClick={()=>void checkProvider(item.slot)}>{checkingSlot===item.slot ? 'Checking…' : 'Check model'}</Button></div>
+                  <Button size="sm" variant="secondary" disabled={!item.enabled || checkingAll || checkingSlot!==null} onClick={()=>void checkProvider(item.slot)}>{checkingSlot===item.slot ? 'Checking…' : 'Check model'}</Button></div>
                 </div>;
               }) : <p className="text-sm">No AI providers are configured.</p>}</div>
               {checkError && <p role="alert" className="mt-3 text-sm text-red-600">{checkError}</p>}
               {aiStatus.lastSuccessful && <p className="mt-3 text-xs text-brand-textSecondary">Your last successful AI request: {aiStatus.lastSuccessful.provider} / {aiStatus.lastSuccessful.model} · {new Date(aiStatus.lastSuccessful.at).toLocaleString()}</p>}
-              <p className="mt-2 text-xs text-brand-textSecondary">Settings show the backend's current configuration. Restart or redeploy the backend after changing environment variables. A successful check confirms a response at that time; it does not guarantee future availability.</p>
+              <p className="mt-2 text-xs text-brand-textSecondary">Settings show the backend&apos;s current configuration. Restart or redeploy the backend after changing environment variables. A successful check confirms a response at that time; it does not guarantee future availability.</p>
             </CardContent>
           </Card>
         )}

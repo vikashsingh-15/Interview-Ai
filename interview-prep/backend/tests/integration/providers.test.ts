@@ -204,7 +204,8 @@ test('mocked Google login verifies state and nonce, creates an account, and reje
   await expect(googleAuth.callback('code',flow.state,'wrong-cookie','test')).rejects.toThrow('Invalid OAuth state');
   const result=await googleAuth.callback('code',flow.state,flow.state,'test');
   expect(result.sessionToken).toBeTruthy();
-  expect(await Session.exists({token:hashToken(result.sessionToken)})).toBeTruthy();
+  expect(result.sessionToken).toBeDefined();
+  expect(await Session.exists({token:hashToken(result.sessionToken!)})).toBeTruthy();
   expect(await Session.exists({token:result.sessionToken})).toBeNull();
   expect(await User.countDocuments({email:'google@example.test'})).toBe(1);
   await expect(googleAuth.callback('code',flow.state,flow.state,'test')).rejects.toThrow('expired or already used');
