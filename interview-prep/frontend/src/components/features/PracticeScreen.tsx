@@ -112,7 +112,7 @@ const DIFFICULTY_ORDER: Record<string, number> = { EASY: 0, MEDIUM: 1, HARD: 2, 
 // Page
 // ---------------------------------------------------------------------------
 
-export function PracticeScreen({ source }: { source?: { kind: 'project' | 'experience'; id: string; label: string } }) {
+export function PracticeScreen({ source, initialTopic }: { source?: { kind: 'project' | 'experience'; id: string; label: string }; initialTopic?: string }) {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const storageKey = `${STORAGE_KEY}:${user?.id || 'anonymous'}:${source ? `${source.kind}:${source.id}` : 'topic'}`;
   const [topics, setTopics] = useState<TopicSummary[] | null>(null);
@@ -128,7 +128,7 @@ export function PracticeScreen({ source }: { source?: { kind: 'project' | 'exper
   const [topicAnswerLoading, setTopicAnswerLoading] = useState<string | null>(null);
 
   // Practice state
-  const [configOpen, setConfigOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(Boolean(initialTopic));
   const [startingPractice, setStartingPractice] = useState(false);
   const [practice, setPractice] = useState<PracticeState | null>(null);
   const [answerLoading, setAnswerLoading] = useState(false);
@@ -983,7 +983,8 @@ export function PracticeScreen({ source }: { source?: { kind: 'project' | 'exper
       {configOpen && (
         <PracticeConfigDialog
           skills={skills}
-          fixedTopic={source?.label.slice(0, 120)}
+          fixedTopic={source?.label.slice(0, 120) || initialTopic?.slice(0, 120)}
+          sourcePractice={Boolean(source)}
           busy={startingPractice}
           error={error}
           onStart={startPractice}

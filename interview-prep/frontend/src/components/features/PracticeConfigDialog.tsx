@@ -69,6 +69,7 @@ export function PracticeConfigDialog({
   onStart,
   onClose,
   fixedTopic,
+  sourcePractice = false,
 }: {
   skills: string[];
   busy?: boolean;
@@ -76,6 +77,7 @@ export function PracticeConfigDialog({
   onStart: (selection: PracticeSelection) => void;
   onClose: () => void;
   fixedTopic?: string;
+  sourcePractice?: boolean;
 }) {
   const [skill, setSkill] = useState<string>(skills[0] ?? OTHER_SKILL);
   const [otherTopic, setOtherTopic] = useState('');
@@ -132,7 +134,7 @@ export function PracticeConfigDialog({
             {fixedTopic ? `Practice ${fixedTopic}` : 'Practice Topic Wise'}
           </h2>
           <p className="mt-1 text-sm text-brand-textSecondary">
-            {fixedTopic ? 'Questions focus on your stored work and stay associated with this entry.' : 'Every question is filed under the topic you pick and appears in that topic’s question list.'}
+            {sourcePractice ? 'Questions focus on your stored work and stay associated with this entry.' : 'Every question is filed under the topic you pick and appears in that topic’s question list.'}
           </p>
 
           {/* Skill */}
@@ -194,7 +196,7 @@ export function PracticeConfigDialog({
           <fieldset className="mt-5">
             <legend className="text-sm font-medium text-brand-text mb-2">Question Type</legend>
             <div className="grid gap-2 sm:grid-cols-2">
-              {QUESTION_TYPE_OPTIONS.filter(o => !fixedTopic || o.value !== 'coding').map((o) => (
+              {QUESTION_TYPE_OPTIONS.filter(o => !sourcePractice || o.value !== 'coding').map((o) => (
                 <label key={o.value} className={`${radioClasses(questionType === o.value)} items-start`}>
                   <input
                     type="radio"

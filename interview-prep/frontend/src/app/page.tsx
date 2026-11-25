@@ -15,7 +15,9 @@ export default function HomePage() {
     if (!isLoading && isAuthenticated) router.replace('/dashboard');
   }, [isAuthenticated, isLoading, router]);
 
-  if (isLoading || isAuthenticated) {
+  // Keep the public landing page visible while /auth/me resolves. This avoids
+  // making a cold API start look like a blank page for signed-out visitors.
+  if (isAuthenticated) {
     return <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-brand-background" role="status" aria-label="Checking your sign-in"><div className="h-10 w-10 animate-spin rounded-full border-b-2 border-brand-secondary" /></main>;
   }
 

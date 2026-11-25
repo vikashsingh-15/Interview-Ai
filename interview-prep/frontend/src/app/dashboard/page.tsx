@@ -29,7 +29,13 @@ export default function DashboardPage() {
   const [regenNote, setRegenNote] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [dashboardPanels, setDashboardPanels] = useState({ today: true, tracker: true, planner: false });
-  const togglePanel = (panel: keyof typeof dashboardPanels) => setDashboardPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  const [mountedPanels, setMountedPanels] = useState({ tracker: false, planner: false });
+  const togglePanel = (panel: keyof typeof dashboardPanels) => {
+    if (panel === 'tracker' || panel === 'planner') {
+      setMountedPanels((current) => ({ ...current, [panel]: true }));
+    }
+    setDashboardPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  };
 
   const regenerateToday = async () => {
     if (regenerating || sessionLoading) return;
@@ -153,7 +159,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
-        <p className="mb-6"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link></p>
+        <p className="mb-6 flex flex-wrap gap-4"><Link href="/onboarding" className="text-blue-700 underline">Review resume, goals and daily plan</Link><Link href="/job-preparation" className="text-blue-700 underline">Prepare for a job</Link></p>
         {dashboardError && <p role="alert" className="mb-6 text-sm text-red-600">{dashboardError}</p>}
         {/* Stats Grid */}
         <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-4 mb-8">
@@ -426,7 +432,9 @@ export default function DashboardPage() {
             <span className="shrink-0 text-xl text-brand-textSecondary" aria-hidden="true">{dashboardPanels.tracker ? '−' : '+'}</span>
           </button>
         </div>
-        <div hidden={!dashboardPanels.tracker} className="min-w-0"><TrackerSection /></div>
+        {mountedPanels.tracker && (
+          <div hidden={!dashboardPanels.tracker} className="min-w-0"><TrackerSection /></div>
+        )}
 
         <div className="mb-4 overflow-hidden rounded-xl border border-brand-border bg-white shadow-sm">
           <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left sm:px-6" aria-expanded={dashboardPanels.planner} onClick={() => togglePanel('planner')}>
@@ -434,7 +442,9 @@ export default function DashboardPage() {
             <span className="shrink-0 text-xl text-brand-textSecondary" aria-hidden="true">{dashboardPanels.planner ? '−' : '+'}</span>
           </button>
         </div>
-        <div hidden={!dashboardPanels.planner} className="min-w-0"><PlannerSection /></div>
+        {mountedPanels.planner && (
+          <div hidden={!dashboardPanels.planner} className="min-w-0"><PlannerSection /></div>
+        )}
 
         {/* Session Sections */}
         {(session?.sections?.length ?? 0) > 0 && (

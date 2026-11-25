@@ -6,5 +6,6 @@ export default function TopicsPage() {
   const { user, isAuthenticated, isLoading } = useAuth();
   if (isLoading) return <SignInPrompt pageName="topics" returnTo="/topics" isLoading />;
   if (!isAuthenticated) return <SignInPrompt pageName="topics" returnTo="/topics" />;
-  return <PracticeScreen key={user?.id || 'anonymous'} />;
+  const initialTopic = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('topic')?.trim().slice(0, 120) : undefined;
+  return <PracticeScreen key={user?.id || 'anonymous'} initialTopic={initialTopic || undefined} />;
 }

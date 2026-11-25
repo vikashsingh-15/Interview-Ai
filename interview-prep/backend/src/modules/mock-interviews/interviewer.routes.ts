@@ -10,14 +10,21 @@ import { structuredAI } from '../../common/services/structured-ai';
 import { evaluateAnswer } from '../evaluation/answer-evaluation';
 import config from '../../config';
 const router=Router();
+const EvaluationFeedback = mongoose.model('EvaluationFeedback', new mongoose.Schema({
+  userId:{type:mongoose.Schema.Types.ObjectId,required:true,index:true},
+  interviewId:{type:mongoose.Schema.Types.ObjectId,required:true},
+  turn:{type:Number,required:true}, notes:{type:String,required:true,maxlength:2000},
+}, {timestamps:true}));
 router.use(authenticate);
 async function publicInterview(interview:any, userId:string) {
   const plain=interview.toObject ? interview.toObject() : interview;
-  const ownedIds = new Set((await Question.distinct('_id', {
+  const owned = await Question.find({
     _id: { $in: plain.questions.map((q:any)=>q.questionId) }, ownerUserId: new mongoose.Types.ObjectId(userId),
-  })).map(id=>String(id)));
-  const questions = plain.questions.filter((q:any)=>ownedIds.has(String(q.questionId)));
-  return {...plain,questions:questions.map((q:any)=>({...q,evaluation:q.status==='answered'?q.evaluation:undefined})),
+  }).select('_id detailedAnswer shortAnswer').lean();
+  const ownedById = new Map(owned.map(q=>[String(q._id),q]));
+  const questions = plain.questions.filter((q:any)=>ownedById.has(String(q.questionId)));
+  return {...plain,questions:questions.map((q:any)=>({...q,evaluation:q.status==='answered'?q.evaluation:undefined,
+    referenceAnswer:q.status==='answered' ? (ownedById.get(String(q.questionId))?.detailedAnswer || ownedById.get(String(q.questionId))?.shortAnswer) : undefined})),
     totalQuestions:questions.length,answeredQuestions:questions.filter((q:any)=>q.status==='answered').length};
 }
 router.post('/start',asyncHandler(async(req:AuthenticatedRequest,res)=>{
@@ -36,12 +43,24 @@ router.get('/:id([a-fA-F0-9]{24})',asyncHandler(async(req:AuthenticatedRequest,r
   if(!interview) throw new NotFoundError('Interview not found');
   res.json({success:true,data:await publicInterview(interview,req.user!.id)});
 }));
+router.post('/:id/evaluation-feedback',asyncHandler(async(req:AuthenticatedRequest,res)=>{
+  const data=z.object({turn:z.number().int().min(0).max(19),notes:z.string().trim().min(1).max(2000)}).parse(req.body);
+  const interview=await MockInterview.findOne({_id:req.params.id,userId:req.user!.id,isDeleted:false});
+  if(!interview || interview.questions[data.turn]?.status !== 'answered') throw new NotFoundError('Evaluated answer not found');
+  await EvaluationFeedback.create({userId:req.user!.id,interviewId:interview._id,...data});
+  res.json({success:true,message:'Feedback saved'});
+}));
 router.post('/:id/answer',asyncHandler(async(req:AuthenticatedRequest,res)=>{
   const data=z.object({turn:z.number().int().min(0).max(19),answer:z.string().min(10).max(10000)}).parse(req.body);
   const interview=await MockInterview.findOneAndUpdate({_id:req.params.id,userId:req.user!.id,status:'in_progress',
     $or:[{turnInProgress:{$ne:true}},{turnStartedAt:{$lt:new Date(Date.now()-10*60000)}}],[`questions.${data.turn}.status`]:'asked'},
     {$set:{turnInProgress:true,turnStartedAt:new Date()}},{new:true});
-  if(!interview) throw new ConflictError('Interview turn is unavailable or already processing');
+  if(!interview) {
+    const existing=await MockInterview.findOne({_id:req.params.id,userId:req.user!.id,isDeleted:false});
+    if(existing?.questions[data.turn]?.status === 'answered' && existing.questions[data.turn].response === data.answer)
+      return res.json({success:true,data:await publicInterview(existing,req.user!.id)});
+    throw new ConflictError('Interview turn is unavailable or already processing');
+  }
   try {
     const turn=interview.questions[data.turn];
       const question=await Question.findOne({ _id:turn.questionId, ownerUserId:req.user!.id });
