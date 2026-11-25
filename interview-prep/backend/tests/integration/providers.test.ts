@@ -46,7 +46,7 @@ test('provider status lists all configured slots and checks only the selected mo
     expect(status.status).toBe(200);
     expect(status.body.data.providers.map((item:any)=>item.model)).toEqual(['primary-model','second-model','third-model','fourth-model']);
     expect(JSON.stringify(status.body)).not.toContain('fixture');
-    mockCreate.mockResolvedValueOnce({choices:[{message:{content:'OK'}}]});
+    mockCreate.mockResolvedValueOnce({choices:[{message:{content:'{"status":"ok"}'},finish_reason:'stop'}]});
     const result=await request(app).post('/api/profile/ai-status/check').set('Cookie',cookie).send({slot:3});
     expect(result.body.data).toMatchObject({slot:3,model:'third-model',status:'working'});
     expect(mockCreate.mock.calls.at(-1)[0].model).toBe('third-model');

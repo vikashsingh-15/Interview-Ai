@@ -4,6 +4,7 @@ import { authenticate, AuthenticatedRequest } from '../../common/middleware/auth
 import { asyncHandler, ValidationError, NotFoundError } from '../../common/filters/error-filter';
 import { hasAnyAI, hasFallbackAI, getActiveProvider, aiProviderCandidates, aiFailureDetails } from '../../common/services/ai-provider';
 import OpenAI from 'openai';
+import { extractJsonObject } from '../../common/services/structured-ai';
 import rateLimit from 'express-rate-limit';
 import { buildDailyPlan } from './daily-plan';
 import aiConfig from '../../config';
@@ -218,9 +219,16 @@ router.post('/ai-status/check', authenticate, providerCheckLimiter, asyncHandler
   const started=Date.now();
   try {
     const client=new OpenAI({apiKey:candidate.apiKey,baseURL:candidate.baseURL,timeout:20000,maxRetries:0});
-    const result=await client.chat.completions.create({model:candidate.model,messages:[{role:'user',content:'Reply with OK.'}],max_tokens:32});
-    if(!result.choices[0]?.message?.content?.trim()) throw new Error('Empty response');
-    res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'working',checkedAt,durationMs:Date.now()-started}});
+    const result=await client.chat.completions.create({model:candidate.model,response_format:{type:'json_object'},
+      messages:[{role:'system',content:'Return only JSON with key status.'},{role:'user',content:'Return {"status":"ok"}.'}],max_tokens:512});
+    const content=result.choices[0]?.message?.content;
+    if(!content?.trim() || result.choices[0]?.finish_reason==='length') {
+      return res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'inconclusive',checkedAt,durationMs:Date.now()-started,reason:'EMPTY_OR_TRUNCATED_RESPONSE'}});
+    }
+    let valid=false;
+    try { const parsed=extractJsonObject(content) as {status?:unknown}; valid=typeof parsed?.status==='string' && parsed.status.toLowerCase()==='ok'; } catch { /* Invalid structured output. */ }
+    if(!valid) return res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'inconclusive',checkedAt,durationMs:Date.now()-started,reason:'INVALID_STRUCTURED_RESPONSE'}});
+    return res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'working',checkedAt,durationMs:Date.now()-started}});
   } catch(error) {
     const details=aiFailureDetails(error);
     res.json({success:true,data:{slot,provider:candidate.name,model:candidate.model,status:'failed',checkedAt,durationMs:Date.now()-started,reason:details.reason,httpStatus:details.status}});

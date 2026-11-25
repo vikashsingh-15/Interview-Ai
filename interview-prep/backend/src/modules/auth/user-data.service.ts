@@ -2,9 +2,6 @@ import mongoose from 'mongoose';
 import Resume, { ResumeVersion } from '../resume/resume.model';
 import { DailySession, SessionQuestion } from '../sessions/daily-session.model';
 import { Question } from '../questions/question.model';
-import InterviewProfile from '../profile/interview-profile.model';
-import ResumeProfile from '../resume/resume-profile.model';
-import User from './user.model';
 import { QuestionFeedback } from '../questions/feedback.model';
 import { resumeStorage } from '../../common/services/resume-storage';
 
@@ -18,16 +15,10 @@ const ACTIVITY_MODELS = [
   'MockInterview',
   'UserProgress',
   'DailyRecord',
-  'TrackerTask',
-  'DailyTrackerEntry',
-  'PlannerTask',
   'SkillGraph',
-  'SearchCache',
-  'AIRequest',
   'QuestionExposure',
   'QuestionGenerationPlan',
   'EvaluationFeedback',
-  'JobPlan',
 ] as const;
 
 export async function resetUserData(userId:string) {
@@ -47,23 +38,12 @@ export async function resetUserData(userId:string) {
   }
   await QuestionFeedback.deleteMany({userId});
 
-  // Preserve saved resume facts and resume-specific goals. Clear practice
-  // readiness so a fresh session can be generated from those saved details.
-  await InterviewProfile.updateMany({userId}, {
-    $set:{onboardingCompleted:false},
-    $unset:{onboardingCompletedAt:1},
+  const Project = mongoose.models.Project;
+  if (Project) await Project.updateMany({userId}, {
+    $set:{totalQuestionsAsked:0,questionHistoryIds:[]}, $unset:{lastQuestionDate:1},
   });
-  await User.updateOne({_id:userId}, {$set:{preferences:{
-    dailyQuestions:5, codingCount:0, systemDesignCount:0, projectQuestions:0,
-    studyDays:90, focusTopics:[], excludedTopics:[], revisionFrequency:'daily',
-    mockInterviewDuration:45, notifyEmail:false, notifyBrowser:true,
-  }}});
 
-  // Projects are part of the interview profile and are cleared on reset.
-  const Project=mongoose.models.Project;
-  if(Project) await Project.deleteMany({userId});
-
-  if(mongoose.models.OAuthState) await mongoose.models.OAuthState.deleteMany({linkUserId:userId});
+  // Resume facts, onboarding, settings, projects and planning data remain intact.
 }
 
 /** Full account deletion removes profile and resume records as well as activity. */

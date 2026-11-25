@@ -111,6 +111,9 @@ test('profile reset clears practice data while preserving resumes, skills and se
     topic:'Python',subtopic:'Concurrency',concepts:['state'],difficulty:'MEDIUM',questionType:'CONCEPTUAL',
     archetype:'CONCEPTUAL',provenance:'USER_CREATED',qualityStatus:'approved'});
   const interviewProfileBefore=await InterviewProfile.findOne({userId:resetUserId}).lean() as any;
+  const userBefore=await User.findById(resetUserId).lean() as any;
+  const resumeFactsBefore=await ResumeProfile.findOne({userId:resetUserId}).lean() as any;
+  const projectIdsBefore=(await mongoose.model('Project').find({userId:resetUserId}).select('_id').lean()).map((p:any)=>String(p._id));
   const curatedBefore=await Question.countDocuments({provenance:'CURATED'});
 
   expect((await request(app).post('/api/auth/me/reset').send({confirmation:'RESET'})).status).toBe(401);
@@ -122,6 +125,13 @@ test('profile reset clears practice data while preserving resumes, skills and se
   expect(await ResumeProfile.countDocuments({userId:resetUserId})).toBeGreaterThan(0);
   const interviewProfile=await InterviewProfile.findOne({userId:resetUserId}).lean() as any;
   expect(interviewProfile.confirmedSkills).toEqual(interviewProfileBefore.confirmedSkills);
+  expect(interviewProfile.onboardingCompleted).toBe(interviewProfileBefore.onboardingCompleted);
+  expect(interviewProfile.onboardingCompleted).toBe(true);
+  expect((await User.findById(resetUserId).lean() as any).preferences).toEqual(userBefore.preferences);
+  const resumeFactsAfter=await ResumeProfile.findOne({userId:resetUserId}).lean() as any;
+  expect(resumeFactsAfter.skills).toEqual(resumeFactsBefore.skills);
+  expect(resumeFactsAfter.projects).toEqual(resumeFactsBefore.projects);
+  expect((await mongoose.model('Project').find({userId:resetUserId}).select('_id').lean()).map((p:any)=>String(p._id))).toEqual(projectIdsBefore);
   expect(interviewProfile.preferences.dailyQuestions).toBe(7);
   expect(interviewProfile.preferences.difficulty).toBe('hard');
   expect(await mongoose.model('Session').countDocuments({userId:resetUserId})).toBeGreaterThan(0);

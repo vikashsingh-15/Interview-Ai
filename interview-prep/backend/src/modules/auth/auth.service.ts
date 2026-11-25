@@ -23,7 +23,7 @@ export const authService = {
     const user=await User.findOne({_id:userId,isAccountDeleted:false});
     if(!user) throw new NotFoundError('User not found');
     await resetUserData(userId);
-    return {success:true,message:'Profile and practice data cleared. Your uploaded resume files and sign-in are still available.'};
+    return {success:true,message:'Practice questions, history and calendar cleared. Your profile and settings are unchanged.'};
   },
   async deleteAccount(userId:string) {
     const user=await User.findOne({_id:userId,isAccountDeleted:false}).select('+googleId');

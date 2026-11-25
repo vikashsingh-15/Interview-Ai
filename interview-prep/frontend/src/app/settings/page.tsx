@@ -102,7 +102,7 @@ const COUNT_FIELDS: Array<{
 ];
 
 export default function SettingsPage() {
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
   const [prefs, setPrefs] = useState<UserPreferences | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -220,9 +220,16 @@ export default function SettingsPage() {
     setError(null);
     try {
       await api.post('/auth/me/reset', { confirmation: 'RESET' });
+      try {
+        if (user?.id) {
+          const prefixes = [`topic-practice-session-v1:${user.id}:`, `mock-answer:${user.id}:`];
+          const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index));
+          for (const key of keys) if (key && (key === `mock-interview:${user.id}` || prefixes.some(prefix => key.startsWith(prefix)))) localStorage.removeItem(key);
+        }
+      } catch { /* Storage may be unavailable. */ }
       setShowResetDialog(false);
       setResetConfirmation('');
-      window.location.href = '/dashboard';
+      setMessage('Practice data cleared. Your resume, profile and settings are saved.');
     } catch (err: any) {
       setError(err?.response?.data?.error?.message || 'Failed to reset data. Try signing in again first.');
     } finally {
@@ -253,13 +260,13 @@ export default function SettingsPage() {
         </p>
         <Card className="mt-6 border-red-300 bg-red-50 dark:bg-red-950/20">
           <CardHeader>
-            <CardTitle className="text-red-700 dark:text-red-300">Reset profile</CardTitle>
+            <CardTitle className="text-red-700 dark:text-red-300">Clear practice data</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-red-800 dark:text-red-200">
-              Clear your interview profile, projects, preferences, practice activity, generated and
-              asked questions, answers, calendar, sessions, and progress. Uploaded resume files
-              and your sign-in will stay saved so you can build a fresh profile.
+              Clear generated and asked questions, answers, practice history, revisions, mock interviews,
+              calendar, sessions, and progress. Your resume, confirmed details, projects, goals, settings,
+              tracker and planner stay saved. You will not need to repeat onboarding.
             </p>
             <Button
               variant="secondary"
@@ -267,7 +274,7 @@ export default function SettingsPage() {
               disabled={isResetting}
               className="mt-4 border-red-300 bg-red-600 text-white hover:bg-red-700"
             >
-              {isResetting ? 'Resetting…' : 'Reset profile and clear practice data'}
+              {isResetting ? 'Clearing…' : 'Clear practice data'}
             </Button>
           </CardContent>
         </Card>
@@ -392,7 +399,7 @@ export default function SettingsPage() {
                 const previous=checks[item.slot];
                 const result=previous?.model===item.model && previous?.provider===item.provider ? previous : undefined;
                 return <div key={item.slot} className="rounded-lg border border-brand-border p-3 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{item.slot===1 ? 'Primary' : `Fallback ${item.slot-1}`}: {item.provider} / {item.model || 'No model set'}</p><p className="text-brand-textSecondary">{!item.configured ? 'Incomplete configuration' : !item.enabled ? 'Duplicate configuration; skipped' : result ? `${result.status === 'working' ? 'Responded successfully' : `Check failed: ${result.reason || 'request error'}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`} · ${new Date(result.checkedAt).toLocaleString()}` : 'Configured · not checked'}</p></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{item.slot===1 ? 'Primary' : `Fallback ${item.slot-1}`}: {item.provider} / {item.model || 'No model set'}</p><p className="text-brand-textSecondary">{!item.configured ? 'Incomplete configuration' : !item.enabled ? 'Duplicate configuration; skipped' : result ? `${result.status === 'working' ? 'Structured response succeeded' : result.status === 'inconclusive' ? `Check inconclusive: ${result.reason === 'EMPTY_OR_TRUNCATED_RESPONSE' ? 'response was empty or truncated' : 'response was not valid structured output'}` : `Check failed: ${result.reason || 'request error'}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`} · ${new Date(result.checkedAt).toLocaleString()}` : 'Configured · not checked'}</p></div>
                   <Button size="sm" variant="secondary" disabled={!item.enabled || checkingAll || checkingSlot!==null} onClick={()=>void checkProvider(item.slot)}>{checkingSlot===item.slot ? 'Checking…' : 'Check model'}</Button></div>
                 </div>;
               }) : <p className="text-sm">No AI providers are configured.</p>}</div>
@@ -407,13 +414,13 @@ export default function SettingsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Confirm data reset">
             <Card className="w-full max-w-md">
               <CardHeader>
-                <CardTitle>Reset profile and practice data?</CardTitle>
+                <CardTitle>Clear practice data?</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-brand-text">
-                  This permanently deletes your interview profile, parsed resume details,
-                  projects, preferences, generated and asked questions, answers, history, calendar,
-                  sessions, and progress. Uploaded resume files and your sign-in will be kept.
+                  This permanently deletes your generated questions, answers, practice history,
+                  revisions, mock interviews, calendar, sessions and progress. Your uploaded resumes,
+                  confirmed skills and details, projects, goals, settings, tracker, planner and sign-in are kept.
                   This cannot be undone.
                 </p>
                 {error && <p role="alert" className="mt-3 rounded-md bg-brand-error/10 p-3 text-sm text-brand-error">{error} <a className="font-semibold text-brand-secondary underline" href="/api/auth/google/link">Sign in with Google again</a>, then retry.</p>}
@@ -442,7 +449,7 @@ export default function SettingsPage() {
                     disabled={resetConfirmation.trim() !== 'RESET' || isResetting}
                     className="border-red-300 bg-red-600 text-white hover:bg-red-700"
                   >
-                    {isResetting ? 'Resetting…' : 'Reset profile'}
+                    {isResetting ? 'Clearing…' : 'Clear practice data'}
                   </Button>
                 </div>
               </CardContent>

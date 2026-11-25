@@ -101,12 +101,12 @@ export function aiFailureDetails(error: unknown) {
   const code = typeof rawCode === 'string' && /^[a-z0-9_:-]{1,80}$/i.test(rawCode) ? rawCode : undefined;
   const rawRequestId = value?.request_id || value?.requestId;
   const providerRequestId = typeof rawRequestId === 'string' && /^[a-z0-9_-]{1,100}$/i.test(rawRequestId) ? rawRequestId : undefined;
-  const timeout = value?.name === 'APIConnectionTimeoutError' || (value?.name === 'APIConnectionError' && /timeout/i.test(value?.message || ''));
+  const timeout = (typeof OpenAI.APIConnectionTimeoutError === 'function' && error instanceof OpenAI.APIConnectionTimeoutError) || value?.name === 'APIConnectionTimeoutError' || (value?.name === 'APIConnectionError' && /timeout/i.test(value?.message || ''));
   const reason = status === 429 ? 'RATE_LIMIT' : timeout ? 'TIMEOUT'
     : error instanceof ZodError ? 'INVALID_SCHEMA'
     : error instanceof SyntaxError ? 'INVALID_JSON'
     : /empty or truncated|no JSON object|unterminated JSON object|no usable/i.test(value?.message || '') ? 'INVALID_RESPONSE'
-    : status ? 'HTTP_ERROR' : value?.name === 'APIConnectionError' ? 'NETWORK_ERROR' : 'REQUEST_ERROR';
+    : status ? 'HTTP_ERROR' : (typeof OpenAI.APIConnectionError === 'function' && error instanceof OpenAI.APIConnectionError) || value?.name === 'APIConnectionError' ? 'NETWORK_ERROR' : 'REQUEST_ERROR';
   return { status, code, providerRequestId, reason, timeout, rateLimited: status === 429,
     errorType: typeof value?.name === 'string' ? value.name : 'UnknownError',
     validationIssueCodes: error instanceof ZodError ? error.issues.map(issue => issue.code).slice(0, 8) : undefined,
